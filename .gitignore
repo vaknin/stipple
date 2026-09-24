@@ -6,3 +6,6 @@ node_modules/
 .DS_Store
 *.log
 /.dev-out/
+
+# compiled shaders (shell-plugin/install.sh builds them)
+*.qsb

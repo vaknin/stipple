@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "kivan.stipple",
+  "name": "Stipple",
+  "version": "0.1.0",
+  "author": "kivan",
+  "description": "Animated Stipple wallpapers: twinkle, shimmer, pan and zoom and colour over the day, drawn on the Bottom layer above the wallpaper PNG.",
+  "kinds": [
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}
