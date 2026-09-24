@@ -192,7 +192,7 @@
         <span>{app.grid.cols}×{app.grid.rows}</span>
         <span>{app.grid.mode === 'braille' ? 'Dots' : 'Letters'}</span>
       {/if}
-      <span>{app.wall.width}×{app.wall.height} {app.wall.placement}{app.wall.box ? ` in ${boxLabel(app.wall)}` : app.wall.marginPct ? ` +${app.wall.marginPct}%` : ''}</span>
+      <span>{app.wall.width}×{app.wall.height}{app.wall.box ? `, art in ${boxLabel(app.wall)}` : ''}</span>
       {#if app.grid}<span class="dim">{app.runMs.toFixed(1)} ms</span>{/if}
     </footer>
   </main>

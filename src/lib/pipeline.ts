@@ -1,6 +1,6 @@
 // Photo -> Grid -> preview. Input only calls schedule(); one render runs per animation frame
-// (app.js does the same). A change that does not touch the conversion (colours, margin, output
-// size with manual columns) only redraws. The full-size render happens on Save / Set only.
+// (app.js does the same). A change that does not touch the conversion (colours, a box moved with
+// manual columns) only redraws. The full-size render happens on Save / Set only.
 
 import type { ConvertOpts, Grid } from '$typist/convert.js';
 import { autoCrop, decodeImage, ImageError, imageErrorMessage, type Photo } from '$typist/imageio.js';
@@ -97,11 +97,8 @@ export async function currentGrid() {
 }
 
 /** Where `g` goes on a width x height canvas with the given (default: current) wall options. */
-export function layoutFor(g: Grid, width: number, height: number, wall: Pick<Wall, 'marginPct' | 'placement' | 'box'> = app.wall): Layout {
-  return layoutArt(
-    { cols: g.cols, rows: g.rows, cellAspect: cellAspect(g.mode) },
-    { width, height, marginPct: wall.marginPct, placement: wall.placement, box: wall.box },
-  );
+export function layoutFor(g: Grid, width: number, height: number, wall: Pick<Wall, 'box'> = app.wall): Layout {
+  return layoutArt({ cols: g.cols, rows: g.rows, cellAspect: cellAspect(g.mode) }, { width, height, box: wall.box });
 }
 
 export function drawPreview() {

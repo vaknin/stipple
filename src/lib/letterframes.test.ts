@@ -10,7 +10,7 @@ const grid = (cols: number, rows: number, text: string): Grid => ({
 } as unknown as Grid);
 
 const lay = (cellW: number): Layout =>
-  ({ cellW, cellH: cellW * 2, x: 1, y: 2, artW: 0, artH: 0, inner: { x: 0, y: 0, w: 0, h: 0 }, clip: null });
+  ({ cellW, cellH: cellW * 2, x: 1, y: 2, artW: 0, artH: 0, inner: { x: 0, y: 0, w: 0, h: 0 }, clip: { x: 0, y: 0, w: 0, h: 0 } });
 
 describe('letter frames', () => {
   test('cells become glyph indices, keyframes pack in shelves', () => {

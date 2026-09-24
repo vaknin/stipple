@@ -2,7 +2,7 @@
 //
 // One gesture is one history step, as in Typist: discrete controls commit right away, sliders
 // commit on release (same label within 600 ms merges), a crop commits on Done. The snapshot holds
-// both the doc and the wallpaper options, so a margin or colour change undoes too.
+// both the doc and the wallpaper options, so an art area or colour change undoes too.
 
 import type { AsciiMethod, Grid, Mode } from '$typist/convert.js';
 import { cleanCrop } from '$typist/crop.js';
@@ -10,7 +10,7 @@ import { History } from '$typist/history.js';
 import type { Photo } from '$typist/imageio.js';
 import { CROP_DEFAULTS, cropSize, TONE_DEFAULTS, type Crop, type Tone } from '$typist/tone.js';
 import { autoCols, cellAspect, fileColours, rowsFor } from './engine/engine';
-import { clampBox, COLS_MAX, COLS_MIN, innerRect, MARGIN_MAX, type Box, type LayoutIn, type Placement } from './layout';
+import { clampBox, COLS_MAX, COLS_MIN, innerRect, type Box, type LayoutIn } from './layout';
 import { defaultMotion, motionFor, supportFor, type Motion, type Support } from './motion';
 import type { Colours } from './render';
 import type { Monitor, ThemeColors } from './tauri';
@@ -31,18 +31,15 @@ export interface Doc {
 }
 
 export interface Wall {
+  /** The output size: the monitor's. */
   width: number;
   height: number;
-  placement: Placement;
-  marginPct: number;
-  /** Crop to the aspect of the space inside the margin, so the art fills it (off = square). */
-  cropToScreen: boolean;
   /** null = Typist's invert rule. */
   ink: string | null;
   paper: string | null;
-  /** The art's box on the screen (fractions); null = the whole screen inside the margin. */
+  /** The art's rectangle on the screen (fractions, Custom); null = the whole screen (Fill). */
   box: Box | null;
-  /** Colour outside the art's box or margin; null = the paper colour. */
+  /** Colour outside the art's box; null = the paper colour. */
   surround: string | null;
 }
 
@@ -70,8 +67,7 @@ export const defaultDoc = (): Doc => ({
 });
 
 export const defaultWall = (): Wall => ({
-  width: 1920, height: 1080, placement: 'fit', marginPct: 0, cropToScreen: false, ink: null, paper: null,
-  box: null, surround: null,
+  width: 1920, height: 1080, ink: null, paper: null, box: null, surround: null,
 });
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
@@ -101,7 +97,7 @@ export function docFrom(raw: unknown): Doc {
   };
 }
 
-/** Wallpaper options from a sidecar's `wallpaper`. */
+/** Wallpaper options from a sidecar's `wallpaper` (an older one's margin and Fit are dropped). */
 export function wallFrom(raw: unknown): Wall {
   const r = obj(raw), d = defaultWall();
   const b = r.box ? obj(r.box) : null;
@@ -109,9 +105,6 @@ export function wallFrom(raw: unknown): Wall {
   return {
     width: size(r.width, d.width),
     height: size(r.height, d.height),
-    placement: oneOf(r.placement, ['fit', 'fill'] as const, d.placement),
-    marginPct: clamp(num(r.marginPct, d.marginPct), 0, MARGIN_MAX),
-    cropToScreen: r.cropToScreen === true,
     ink: hex(r.ink),
     paper: hex(r.paper),
     box: b ? clampBox({ x: num(b.x, NaN), y: num(b.y, NaN), w: num(b.w, NaN), h: num(b.h, NaN) }) : null,
@@ -120,11 +113,10 @@ export function wallFrom(raw: unknown): Wall {
 }
 
 /**
- * The crop's aspect (width / height): the inner rectangle's with Crop to screen on, else 1. Rounded
- * so a size or margin change that keeps the shape keeps the converter's cached samples.
+ * The crop's aspect (width / height): the art's rectangle's, so the art fills it. Rounded so a
+ * change that keeps the shape keeps the converter's cached samples.
  */
-export function cropAspectFor(wall: Pick<Wall, 'width' | 'height' | 'marginPct' | 'cropToScreen' | 'box'>): number {
-  if (!wall.cropToScreen) return 1;
+export function cropAspectFor(wall: Pick<Wall, 'width' | 'height' | 'box'>): number {
   const r = innerRect(wall);
   return Math.round((r.w / r.h) * 1e6) / 1e6;
 }
@@ -178,10 +170,7 @@ class AppState {
 
   /** Which effects the current style can play. */
   support: Support = $derived(supportFor(this.doc));
-  layoutIn: LayoutIn = $derived({
-    width: this.wall.width, height: this.wall.height, marginPct: this.wall.marginPct, placement: this.wall.placement,
-    box: this.wall.box,
-  });
+  layoutIn: LayoutIn = $derived({ width: this.wall.width, height: this.wall.height, box: this.wall.box });
   /** Crop width / height (1 = square). */
   cropAspect = $derived(cropAspectFor(this.wall));
   /** The crop the engine samples (see effectiveCrop). */
@@ -254,20 +243,24 @@ class AppState {
   }
 
   /**
-   * Crop to screen on / off. An upright crop that fits on the photo is moved just enough to stay
-   * on it in the new shape (a square panned to one side would otherwise widen off the photo).
+   * After the art's shape changed (Fill / Custom, a resized box, another screen): an upright crop
+   * that fits on the photo is moved just enough to stay on it in the new shape (a crop panned to
+   * one side would otherwise widen off the photo).
    */
-  setCropToScreen(on: boolean) {
-    if (on === this.wall.cropToScreen) return;
-    this.wall.cropToScreen = on;
+  keepCropOnPhoto() {
     const p = this.loaded?.photo, c = this.crop;
-    if (p && !c.rotation) {
-      const [cw, ch] = cropSize(p.width, p.height, c);
-      const x = cw <= p.width ? clamp(c.x, cw / 2 / p.width, 1 - cw / 2 / p.width) : c.x;
-      const y = ch <= p.height ? clamp(c.y, ch / 2 / p.height, 1 - ch / 2 / p.height) : c.y;
-      if (x !== c.x || y !== c.y) this.doc.crop = { ...this.doc.crop, x, y };
-    }
-    this.commit('Crop to screen');
+    if (!p || c.rotation) return;
+    const [cw, ch] = cropSize(p.width, p.height, c);
+    const x = cw <= p.width ? clamp(c.x, cw / 2 / p.width, 1 - cw / 2 / p.width) : c.x;
+    const y = ch <= p.height ? clamp(c.y, ch / 2 / p.height, 1 - ch / 2 / p.height) : c.y;
+    if (x !== c.x || y !== c.y) this.doc.crop = { ...this.doc.crop, x, y };
+  }
+
+  /** Set the art's box (null = Fill) as one history step. */
+  setBox(b: Box | null, label: string) {
+    this.wall.box = b ? clampBox(b, 16 / Math.min(this.wall.width, this.wall.height)) : null;
+    this.keepCropOnPhoto();
+    this.commit(label);
   }
 
   setInvert(on: boolean) {

@@ -2,7 +2,7 @@
   // The wallpaper at the window's size: the output's aspect, drawn in device pixels. When the
   // canvas would be as large as the output, it is the output (and CSS shrinks it).
   import { onMount, untrack } from 'svelte';
-  import { boxPx, clampBox } from '../layout';
+  import { boxPx, clampBox, type Box } from '../layout';
   import { drawPreview, schedule, setPreviewCanvas } from '../pipeline';
   import { app } from '../state.svelte';
   import Icon from './Icon.svelte';
@@ -38,58 +38,94 @@
     });
   });
 
-  // ---- the art's box: drag to move it, scroll to resize it (Wallpaper > Art area > Box)
+  // ---- the art's rectangle (Wallpaper > Art area > Custom): drag inside it to move it, drag an
+  // edge or corner to resize it, scroll over it to scale it, double-click it to centre it
   const boxCss = $derived.by(() => {
     const b = app.wall.box;
     if (!b || !app.loaded) return null;
-    const r = boxPx(b, fitted.cssW, fitted.cssH);
-    return r;
+    return boxPx(b, fitted.cssW, fitted.cssH);
   });
-  let drag: { px: number; py: number; x: number; y: number } | null = $state(null);
-  let hover = $state(false);
+
+  /** Which edges a pointer grabs: none of them = move. */
+  interface Grip { l: boolean; t: boolean; r: boolean; b: boolean }
+  /** How close to an edge (CSS px) grabs it. */
+  const EDGE = 8;
+
+  let drag: { px: number; py: number; start: Box; grip: Grip } | null = $state(null);
+  let grip: Grip | null = $state(null);
   const minBox = () => 16 / Math.min(app.wall.width, app.wall.height);
 
-  function inBox(e: PointerEvent | WheelEvent) {
+  /** The grip at a pointer: null outside the rectangle (and its edge band). */
+  function gripAt(e: PointerEvent | WheelEvent | MouseEvent): Grip | null {
     const r = boxCss;
-    if (!r || app.cropping) return false;
+    if (!r || app.cropping) return null;
     const c = canvas.getBoundingClientRect();
     const x = e.clientX - c.left, y = e.clientY - c.top;
-    return x >= r.x && y >= r.y && x <= r.x + r.w && y <= r.y + r.h;
+    if (x < r.x - EDGE || y < r.y - EDGE || x > r.x + r.w + EDGE || y > r.y + r.h + EDGE) return null;
+    // a small rectangle keeps a middle to move it by
+    const e2 = Math.min(EDGE, r.w / 4, r.h / 4);
+    return { l: x < r.x + e2, t: y < r.y + e2, r: x > r.x + r.w - e2, b: y > r.y + r.h - e2 };
   }
 
+  const CURSORS: Record<string, string> = {
+    '': 'move', l: 'ew-resize', r: 'ew-resize', t: 'ns-resize', b: 'ns-resize',
+    lt: 'nwse-resize', rb: 'nwse-resize', rt: 'nesw-resize', lb: 'nesw-resize',
+  };
+  const cursor = $derived.by(() => {
+    const g = drag?.grip ?? grip;
+    if (!g) return '';
+    return CURSORS[(g.l ? 'l' : '') + (g.r ? 'r' : '') + (g.t ? 't' : '') + (g.b ? 'b' : '')] ?? 'move';
+  });
+
   function onDown(e: PointerEvent) {
-    const b = app.wall.box;
-    if (!b || e.button !== 0 || !inBox(e)) return;
-    drag = { px: e.clientX, py: e.clientY, x: b.x, y: b.y };
+    const b = app.wall.box, g = gripAt(e);
+    if (!b || e.button !== 0 || !g) return;
+    drag = { px: e.clientX, py: e.clientY, start: { ...b }, grip: g };
     canvas.setPointerCapture(e.pointerId);
     e.preventDefault();
   }
 
   function onMove(e: PointerEvent) {
-    hover = inBox(e);
-    const b = app.wall.box;
-    if (!drag || !b) return;
+    if (!drag) { grip = gripAt(e); return; }
+    const { start: s, grip: g } = drag;
     const dx = (e.clientX - drag.px) / fitted.cssW, dy = (e.clientY - drag.py) / fitted.cssH;
-    app.wall.box = clampBox({ ...b, x: drag.x + dx, y: drag.y + dy }, minBox());
+    const min = minBox();
+    if (!g.l && !g.r && !g.t && !g.b) {
+      app.wall.box = clampBox({ ...s, x: s.x + dx, y: s.y + dy }, min);
+      return;
+    }
+    // move the grabbed edges, on the canvas and never closer than `min`
+    let x0 = s.x, y0 = s.y, x1 = s.x + s.w, y1 = s.y + s.h;
+    if (g.l) x0 = Math.max(0, Math.min(x1 - min, x0 + dx));
+    if (g.r) x1 = Math.min(1, Math.max(x0 + min, x1 + dx));
+    if (g.t) y0 = Math.max(0, Math.min(y1 - min, y0 + dy));
+    if (g.b) y1 = Math.min(1, Math.max(y0 + min, y1 + dy));
+    app.wall.box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
   }
 
   function onUp(e: PointerEvent) {
     if (!drag) return;
-    const moved = app.wall.box && (app.wall.box.x !== drag.x || app.wall.box.y !== drag.y);
+    const { start: s, grip: g } = drag, b = app.wall.box;
     drag = null;
     if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
-    if (moved) app.commit('Move art');
+    if (!b || (b.x === s.x && b.y === s.y && b.w === s.w && b.h === s.h)) return;
+    app.setBox(b, g.l || g.r || g.t || g.b ? 'Resize art' : 'Move art');
   }
 
   function onWheel(e: WheelEvent) {
     const b = app.wall.box;
-    if (!b || !inBox(e)) return;
+    if (!b || !gripAt(e)) return;
     e.preventDefault();
     const k = Math.exp(-Math.sign(e.deltaY) * 0.06);
     const nw = Math.min(1, b.w * k), nh = Math.min(1, b.h * k);
     if (nw < minBox() || nh < minBox()) return;
-    app.wall.box = clampBox({ x: b.x + (b.w - nw) / 2, y: b.y + (b.h - nh) / 2, w: nw, h: nh }, minBox());
-    app.commit('Art box size');
+    app.setBox({ x: b.x + (b.w - nw) / 2, y: b.y + (b.h - nh) / 2, w: nw, h: nh }, 'Resize art');
+  }
+
+  function onDblClick(e: MouseEvent) {
+    const b = app.wall.box;
+    if (!b || !gripAt(e)) return;
+    app.setBox({ ...b, x: (1 - b.w) / 2, y: (1 - b.h) / 2 }, 'Centre art');
   }
 
   onMount(() => {
@@ -125,18 +161,22 @@
       <canvas
         bind:this={canvas}
         class="preview-canvas"
-        class:movable={hover || drag}
-        style="width: {fitted.cssW}px; height: {fitted.cssH}px"
+        style="width: {fitted.cssW}px; height: {fitted.cssH}px; cursor: {cursor || 'auto'}"
         onpointerdown={onDown}
         onpointermove={onMove}
         onpointerup={onUp}
         onpointercancel={onUp}
-        onpointerleave={() => { if (!drag) hover = false; }}
+        onpointerleave={() => { if (!drag) grip = null; }}
         onwheel={onWheel}
+        ondblclick={onDblClick}
       ></canvas>
-      {#if boxCss && (hover || drag)}
-        <div class="box-outline" aria-hidden="true"
-          style="left: {boxCss.x}px; top: {boxCss.y}px; width: {boxCss.w}px; height: {boxCss.h}px"></div>
+      {#if boxCss && !app.cropping}
+        <div class="box-outline" class:active={grip || drag} aria-hidden="true"
+          style="left: {boxCss.x}px; top: {boxCss.y}px; width: {boxCss.w}px; height: {boxCss.h}px">
+          {#if grip || drag}
+            {#each ['lt', 'rt', 'lb', 'rb'] as k (k)}<i class="handle {k}"></i>{/each}
+          {/if}
+        </div>
       {/if}
     </div>
   </div>
@@ -170,15 +210,29 @@
   }
   .frame { display: contents; }
   .stage { position: relative; }
-  .movable { cursor: move; }
   .box-outline {
     position: absolute;
     box-sizing: border-box;
-    border: 1px dashed var(--accent);
-    outline: 1px dashed color-mix(in srgb, var(--bg) 70%, transparent);
-    outline-offset: -2px;
+    border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
     pointer-events: none;
   }
+  .box-outline.active {
+    border-color: var(--accent);
+    outline: 1px dashed color-mix(in srgb, var(--bg) 70%, transparent);
+    outline-offset: -2px;
+  }
+  .handle {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border: 1px solid var(--bg);
+    border-radius: 2px;
+    background: var(--accent);
+  }
+  .handle.lt { left: -5px; top: -5px; }
+  .handle.rt { right: -5px; top: -5px; }
+  .handle.lb { left: -5px; bottom: -5px; }
+  .handle.rb { right: -5px; bottom: -5px; }
   canvas {
     display: block;
     box-shadow: 0 0 0 1px var(--border), 0 6px 24px rgba(0, 0, 0, 0.35);
