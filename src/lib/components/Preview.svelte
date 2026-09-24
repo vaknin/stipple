@@ -148,7 +148,7 @@
       <button type="button" class="primary" onclick={onopen} disabled={app.loading}>
         <Icon name="open" /> {app.loading ? 'Opening…' : 'Open a photo'}
       </button>
-      <p class="hint">PNG, JPEG or WebP. The wallpaper is made at {app.wall.width}×{app.wall.height}.</p>
+      <p class="hint">PNG, JPEG, WebP or Canon CR3. The wallpaper is made at {app.wall.width}×{app.wall.height}.</p>
     </div>
   {:else if app.loading}
     <div class="loading">Opening…</div>

@@ -235,7 +235,8 @@ function drawThumb(cv: HTMLCanvasElement, g: Grid, colours: { ink: string; paper
 
 // -------------------------------------------------------------------------------------- intake
 
-const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' };
+// a CR3 arrives as the camera's JPEG from inside it (src-tauri/src/raw.rs)
+const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', cr3: 'image/jpeg' };
 export const IMAGE_EXTS = Object.keys(MIME);
 
 export const baseName = (p: string) => p.split('/').pop() ?? p;
@@ -268,7 +269,7 @@ export async function openPath(path: string, { asPhoto = false } = {}) {
   const name = baseName(path);
   const ext = name.split('.').pop()?.toLowerCase() ?? '';
   if (!MIME[ext]) {
-    app.say('error', `${name} is not a PNG, JPEG or WebP image.`);
+    app.say('error', `${name} is not a PNG, JPEG, WebP or CR3 image.`);
     return;
   }
   const seq = ++loadSeq;

@@ -10,7 +10,7 @@ instead, with the art fitted (or filled) and the rest in the paper colour, so no
 
 ## Use
 
-1. **Open a photo** (PNG, JPEG or WebP): the Open button, `O`, or drag and drop it onto the window.
+1. **Open a photo** (PNG, JPEG, WebP or Canon CR3 raw): the Open button, `O`, or drag and drop it onto the window.
 2. Adjust it. The preview follows every control while you drag.
    - **Look**: Photo, Texture, Sketch, Soft, Poster (thumbnails are made from your photo).
    - **Style**: Dots, Letters or Blocks, with Dithering (Atkinson, Floyd–Steinberg, Ordered,

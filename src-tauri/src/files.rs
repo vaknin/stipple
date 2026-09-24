@@ -16,7 +16,7 @@ pub const MAX_PNG: usize = 256 * 1024 * 1024;
 pub const MAX_SIDECAR: usize = 32 * 1024 * 1024;
 /// Largest dot field side (2 x 200 columns, and rows for a very tall crop).
 pub const MAX_FIELD: u32 = 8192;
-const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp"];
+const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "cr3"];
 const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 /// `~/Pictures/Wallpapers`
@@ -38,14 +38,18 @@ fn ext_of(p: &Path) -> Option<String> {
     p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase)
 }
 
-/// A photo to convert: PNG, JPEG or WebP, at most 64 MB.
+/// A photo to convert: PNG, JPEG or WebP, at most 64 MB, or a Canon CR3 (its camera JPEG).
 pub fn read_image(path: &Path) -> Result<Vec<u8>, String> {
-    if !ext_of(path).is_some_and(|e| IMAGE_EXTS.contains(&e.as_str())) {
-        return Err(format!("{} is not a PNG, JPEG or WebP file", path.display()));
+    let ext = ext_of(path);
+    if !ext.as_deref().is_some_and(|e| IMAGE_EXTS.contains(&e)) {
+        return Err(format!("{} is not a PNG, JPEG, WebP or CR3 file", path.display()));
     }
     let meta = fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
     if !meta.is_file() {
         return Err(format!("{} is not a file", path.display()));
+    }
+    if ext.as_deref() == Some("cr3") {
+        return crate::raw::cr3_jpeg(path);
     }
     if meta.len() > MAX_READ {
         return Err(format!("{} is larger than 64 MB", path.display()));

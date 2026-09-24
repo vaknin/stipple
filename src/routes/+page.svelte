@@ -62,7 +62,8 @@
         title: 'Open a photo',
         multiple: false,
         directory: false,
-        filters: [{ name: 'Images', extensions: IMAGE_EXTS }],
+        // GTK matches patterns case-sensitively, and cameras write .JPG and .CR3
+        filters: [{ name: 'Images', extensions: [...IMAGE_EXTS, ...IMAGE_EXTS.map(e => e.toUpperCase())] }],
       });
       if (typeof path === 'string') await openPath(path);
     } catch (e) {
@@ -129,7 +130,7 @@
             app.dragOver = false;
             const path = p.paths.find(x => IMAGE_EXTS.includes(x.split('.').pop()?.toLowerCase() ?? ''));
             if (path) void openPath(path);
-            else if (p.paths.length) app.say('error', 'That is not a PNG, JPEG or WebP image.');
+            else if (p.paths.length) app.say('error', 'That is not a PNG, JPEG, WebP or CR3 image.');
           }
         })
         .then(u => { if (alive) unlisten = u; else u(); });

@@ -6,6 +6,7 @@ mod commands;
 mod files;
 mod monitors;
 mod omarchy;
+mod raw;
 mod sys;
 
 pub fn run() {
