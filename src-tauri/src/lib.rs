@@ -19,6 +19,7 @@ pub fn run() {
             commands::save_png,
             commands::save_sidecar,
             commands::save_field,
+            commands::remove_motion_files,
             commands::read_sidecar,
             commands::set_wallpaper,
             commands::add_to_theme_backgrounds,

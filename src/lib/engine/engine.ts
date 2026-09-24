@@ -38,6 +38,7 @@ export interface ConvertRequest { crop: Crop; opts: ConvertOpts }
 export interface ConvertResult { grid: Grid; ms: number }
 
 export type Lane = 'main' | 'thumb';
+const LANES = ['main', 'thumb'] as const;
 
 /** What a conversion backend does: inline (this thread) or in convert.worker.ts. */
 export interface Backend {
@@ -116,7 +117,7 @@ export function workerBackend(): Backend {
 
   return {
     async setSource(canvas) {
-      for (const lane of ['main', 'thumb'] as const) { pending[lane]?.resolve(null); delete pending[lane]; }
+      for (const lane of LANES) { pending[lane]?.resolve(null); delete pending[lane]; }
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) throw new Error('no 2D canvas');
       const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -149,6 +150,8 @@ export class Engine {
   /** Newest request whose result was handed out, per lane. */
   #shown = { main: 0, thumb: 0 };
   #source = 0;
+  /** Columns keyframes, converted in parallel on workers of their own. */
+  readonly frames = new FramePool();
 
   constructor(backend: Backend = defaultBackend()) {
     this.#backend = backend;
@@ -157,6 +160,7 @@ export class Engine {
   /** A new photo: every request made before it resolves to null. */
   async setSource(canvas: HTMLCanvasElement): Promise<void> {
     const id = ++this.#source;
+    this.frames.setSource(canvas);
     await this.#backend.setSource(canvas);
     if (id !== this.#source) throw new Error('superseded');
   }
@@ -181,5 +185,104 @@ export class Engine {
 
   dispose() {
     this.#backend.dispose();
+    this.frames.cancel();
   }
 }
+
+/**
+ * The Columns keyframes: a batch of conversions spread over several workers (convert.worker.ts,
+ * each with its own copy of the photo), so it neither waits behind the preview nor slows it. The
+ * workers exist only while a batch runs: each holds the decoded photo and its tables.
+ */
+export class FramePool {
+  #canvas: HTMLCanvasElement | null = null;
+  #batch = 0;
+  #workers: Worker[] = [];
+  /** Rejects the calls in flight (terminated workers never answer). */
+  #stops = new Set<(e: Error) => void>();
+  readonly size = Math.max(1, Math.min(6, (globalThis.navigator?.hardwareConcurrency ?? 4) - 2));
+
+  setSource(canvas: HTMLCanvasElement) {
+    this.cancel();
+    this.#canvas = canvas;
+  }
+
+  /** Stop the running batch (it resolves null). */
+  cancel() {
+    this.#batch++;
+    for (const w of this.#workers) w.terminate();
+    this.#workers = [];
+    for (const stop of this.#stops) stop(new Error('cancelled'));
+    this.#stops.clear();
+  }
+
+  /**
+   * Convert every request, largest first (the batch ends sooner). `onEach` hears of each result.
+   * Resolves null when cancelled or when a newer batch starts.
+   */
+  async run(reqs: ConvertRequest[], onEach: (index: number, grid: Grid) => void): Promise<Grid[] | null> {
+    this.cancel();
+    const batch = this.#batch;
+    const canvas = this.#canvas;
+    if (!canvas) return null;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) throw new Error('no 2D canvas');
+    const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const order = reqs.map((_, i) => i).sort((a, b) => cellsOf(reqs[b]!) - cellsOf(reqs[a]!));
+    const out: Grid[] = new Array(reqs.length);
+    let next = 0;
+
+    let workers: Worker[];
+    try {
+      workers = Array.from({ length: Math.min(this.size, reqs.length) }, () =>
+        new Worker(new URL('./convert.worker.ts', import.meta.url), { type: 'module' }));
+    } catch {
+      // no module workers: one converter on this thread
+      const conv = createConverter();
+      conv.setSource(canvas);
+      for (const i of order) {
+        await new Promise(r => setTimeout(r, 0));
+        if (batch !== this.#batch) return null;
+        out[i] = conv.run(reqs[i]!.crop, reqs[i]!.opts);
+        onEach(i, out[i]!);
+      }
+      return out;
+    }
+    this.#workers = workers;
+
+    type Reply = { type: string; grid?: Grid; error?: string };
+    const call = (w: Worker, msg: object) => new Promise<Reply>((resolve, reject) => {
+      const done = () => this.#stops.delete(reject);
+      this.#stops.add(reject);
+      w.onmessage = e => { done(); resolve(e.data as Reply); };
+      w.onerror = e => { done(); reject(new Error(e.message || 'the conversion worker failed')); };
+      w.postMessage({ ...msg, id: 1 });
+    });
+
+    const lane = async (w: Worker) => {
+      // a copy of the photo per worker (structured clone)
+      await call(w, { type: 'source', width, height, data: data.buffer.slice(0) });
+      while (next < order.length && batch === this.#batch) {
+        const i = order[next++]!;
+        const m = await call(w, { type: 'run', lane: 'main', crop: reqs[i]!.crop, opts: reqs[i]!.opts });
+        if (batch !== this.#batch) return;
+        if (m.type === 'error' || !m.grid) throw new Error(m.error ?? 'the conversion failed');
+        out[i] = m.grid;
+        onEach(i, m.grid);
+      }
+    };
+
+    let ok = false;
+    try {
+      await Promise.all(workers.map(lane));
+      ok = batch === this.#batch;
+    } catch (e) {
+      if (batch === this.#batch) throw e;
+    } finally {
+      if (batch === this.#batch) this.cancel();
+    }
+    return ok ? out : null;
+  }
+}
+
+const cellsOf = (r: ConvertRequest) => r.opts.cols * r.opts.rows;

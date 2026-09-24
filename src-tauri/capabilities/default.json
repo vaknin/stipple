@@ -11,6 +11,7 @@
     "allow-save-png",
     "allow-save-sidecar",
     "allow-save-field",
+    "allow-remove-motion-files",
     "allow-read-sidecar",
     "allow-set-wallpaper",
     "allow-add-to-theme-backgrounds",

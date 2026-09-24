@@ -7,9 +7,11 @@
 //   Shimmer   the tone is re-dithered each tick with noise in the threshold (Dots + Ordered)
 //   Pan       the view breathes in and wanders inside the crop, re-dithered (Dots + Ordered)
 //   Day       ink and paper blend to night colours with the clock (any mono style)
+//   Columns   the column count sweeps From -> To -> From through real keyframes (Letters)
 
 import type { DotField, Grid } from '$typist/convert.js';
 import { encodeBraille } from '$typist/dither.js';
+import { COLS_MAX, COLS_MIN } from './layout';
 import type { Colours } from './render';
 
 export type Rate = 'keep' | 'slow' | 'still';
@@ -30,6 +32,8 @@ export interface Motion {
     /** Minutes the change takes, centred on each boundary. */
     fade: number;
   };
+  /** Keyframes from `from` to `to` columns and back once per `period` s, `fps` new ones a second. */
+  columns: { on: boolean; from: number; to: number; fps: number; period: number };
   /** With windows open on the screen's workspace. */
   windows: Rate;
   battery: BatteryRule;
@@ -41,18 +45,19 @@ export const defaultMotion = (): Motion => ({
   shimmer: { on: false, amount: 0.3, rate: 8 },
   pan: { on: false, zoom: 0.15, period: 60, fps: 8 },
   day: { on: false, nightInk: null, nightPaper: null, nightStart: 19 * 60, nightEnd: 7 * 60, fade: 60 },
+  columns: { on: false, from: 10, to: 500, fps: 15, period: 20 },
   windows: 'slow',
   battery: 'same',
   seed: 1,
 });
 
 /** What each effect needs, for the Motion tab to explain a disabled switch. */
-export interface Support { dots: boolean; ordered: boolean; mono: boolean }
+export interface Support { dots: boolean; ordered: boolean; mono: boolean; letters: boolean }
 
 /** Which effects a style can play: dot effects need Dots, re-dithering needs Ordered too. */
 export function supportFor(doc: { mode: string; dither: string; color: boolean }): Support {
   const dots = doc.mode === 'braille';
-  return { dots, ordered: dots && doc.dither === 'bayer', mono: !(doc.mode === 'blocks' && doc.color) };
+  return { dots, ordered: dots && doc.dither === 'bayer', mono: !(doc.mode === 'blocks' && doc.color), letters: doc.mode === 'ascii' };
 }
 
 /** Motion from a sidecar (any older or partial form) over the defaults. */
@@ -76,13 +81,14 @@ export function cleanMotion(raw: unknown): Motion {
     shimmer: part(d.shimmer, r.shimmer),
     pan: part(d.pan, r.pan),
     day: part(d.day, r.day),
+    columns: part(d.columns, r.columns),
     windows: pick(r.windows, ['keep', 'slow', 'still'] as const, d.windows),
     battery: pick(r.battery, ['same', 'half', 'still'] as const, d.battery),
     seed: typeof r.seed === 'number' && Number.isFinite(r.seed) ? r.seed >>> 0 : d.seed,
   };
 }
 
-export const anyMotion = (m: Motion) => m.twinkle.on || m.shimmer.on || m.pan.on || m.day.on;
+export const anyMotion = (m: Motion) => m.twinkle.on || m.shimmer.on || m.pan.on || m.day.on || m.columns.on;
 /** Effects drawn from the dot field (Dots only). */
 export const dotMotion = (m: Motion) => m.twinkle.on || m.shimmer.on || m.pan.on;
 /** Effects that re-dither the tone (need Ordered dithering to start from the saved dots). */
@@ -90,6 +96,7 @@ export const toneMotion = (m: Motion) => m.shimmer.on || m.pan.on;
 
 /** Frames per second the effects need (the plugin's baseFps). 0 = still between colour changes. */
 export function motionFps(m: Motion): number {
+  if (m.columns.on) return Math.min(30, Math.max(1, m.columns.fps));
   if (!dotMotion(m)) return 0;
   if (m.pan.on) return m.pan.fps;
   return Math.max(m.twinkle.on ? m.twinkle.rate : 0, m.shimmer.on ? m.shimmer.rate : 0);
@@ -104,7 +111,64 @@ export function motionFor(m: Motion, s: Support, colours: Colours): Motion {
     shimmer: { ...m.shimmer, on: m.shimmer.on && s.dots && s.ordered },
     pan: { ...m.pan, on: m.pan.on && s.dots && s.ordered },
     day: { ...m.day, on: m.day.on && s.mono, nightInk: night.ink, nightPaper: night.paper },
+    columns: { ...m.columns, on: m.columns.on && s.letters },
   };
+}
+
+// ------------------------------------------------------------------------------------ columns
+
+/**
+ * The column counts of the Columns keyframes, ascending: `steps` counts spaced geometrically
+ * between `from` and `to` (every step looks about as big), plus `saved`, the still picture's
+ * count, when it lies in the range. Near the coarse end the counts are whole numbers apart, so
+ * there are fewer of them than asked for.
+ */
+export function columnKeyframes(from: number, to: number, steps: number, saved: number): number[] {
+  const c = (v: number) => Math.min(COLS_MAX, Math.max(COLS_MIN, Math.round(Number.isFinite(v) ? v : COLS_MIN)));
+  const lo = c(Math.min(from, to)), hi = c(Math.max(from, to));
+  const n = Math.max(2, Math.round(Number.isFinite(steps) ? steps : 2));
+  const out = new Set<number>();
+  for (let i = 0; i < n; i++) out.add(c(lo * (hi / lo) ** (i / (n - 1))));
+  if (saved >= lo && saved <= hi) out.add(c(saved));
+  return [...out].sort((a, b) => a - b);
+}
+
+/** Cells all keyframes may hold together (frames.png: 4096 wide, room to spare under 8192 tall). */
+export const COLUMN_CELLS_MAX = 4096 * 6000;
+
+/**
+ * The keyframes a Columns setting makes: one per frame of a sweep (fps x half the cycle), fewer
+ * when all their cells would not fit COLUMN_CELLS_MAX. `rowsOf` gives a count's rows.
+ */
+export function columnPlan(c: Motion['columns'], saved: number, rowsOf: (cols: number) => number) {
+  const want = Math.max(2, Math.round(Math.max(1, c.fps) * Math.max(1, c.period) / 2) + 1);
+  let steps = want;
+  for (;;) {
+    const cols = columnKeyframes(c.from, c.to, steps, saved);
+    const cells = cols.reduce((a, k) => a + k * rowsOf(k), 0);
+    if (cells <= COLUMN_CELLS_MAX || steps <= 2) return { cols, cells, capped: steps < want };
+    steps = Math.max(2, Math.floor(steps * 0.8));
+  }
+}
+
+/** The keyframe to start on: the saved count's, or the nearer end. */
+export function columnStart(keys: number[], saved: number): number {
+  let best = 0;
+  for (let i = 1; i < keys.length; i++) if (Math.abs(keys[i]! - saved) < Math.abs(keys[best]! - saved)) best = i;
+  return best;
+}
+
+/**
+ * The keyframe shown at time t (s): there and back once per `period` at an even pace, so every
+ * keyframe shows for the same time, and keyframe `start` at t = 0 (Service.qml columnFrameAt).
+ */
+export function columnFrameAt(t: number, n: number, period: number, start: number): number {
+  if (n < 2) return 0;
+  const P = Math.max(period, 1);
+  const s0 = Math.min(1, Math.max(0, start / (n - 1)));
+  const u = ((((t / P + s0 / 2) % 1) + 1) % 1);
+  const i = Math.round((n - 1) * (u < 0.5 ? 2 * u : 2 - 2 * u));
+  return Math.min(n - 1, Math.max(0, i));
 }
 
 // ------------------------------------------------------------------------------ shader mirror

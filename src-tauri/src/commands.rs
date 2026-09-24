@@ -47,9 +47,10 @@ pub async fn save_sidecar(png_path: String, json: String) -> Result<String, Stri
     Ok(path.display().to_string())
 }
 
-/// The dot field of a saved Dots wallpaper, for the animated wallpaper: raw RGB body (3 bytes per
-/// dot), headers `x-png-path` (percent-encoded path of the wallpaper) and `x-size` (`<W>x<H>`).
-/// Written as `<dir>/.stipple/<stem>/field.png`.
+/// A texture of a saved wallpaper for the animated wallpaper (the Dots field, or the Letters
+/// Columns keyframes and glyphs): raw RGB body (3 bytes per texel), headers `x-png-path`
+/// (percent-encoded path of the wallpaper), `x-size` (`<W>x<H>`) and `x-name` (field, frames or
+/// glyphs; field when absent). Written as `<dir>/.stipple/<stem>/<name>.png`.
 #[tauri::command]
 pub async fn save_field(request: Request<'_>) -> Result<String, String> {
     let InvokeBody::Raw(bytes) = request.body() else {
@@ -62,7 +63,11 @@ pub async fn save_field(request: Request<'_>) -> Result<String, String> {
         .split_once('x')
         .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)))
         .ok_or("x-size must be <width>x<height>")?;
-    let path = files::save_field(&png, size, bytes)?;
+    let name = match header("x-name") {
+        "" => "field",
+        n => n,
+    };
+    let path = files::save_field(&png, name, size, bytes)?;
     Ok(path.display().to_string())
 }
 
@@ -71,6 +76,14 @@ pub struct Sidecar {
     json: String,
     /// The PNG is in the output folder or the theme backgrounds, so Save may update it in place.
     editable: bool,
+}
+
+/// Remove the motion textures of a saved wallpaper that it no longer uses (`keep`: the ones it
+/// does, of field, frames and glyphs).
+#[tauri::command]
+pub async fn remove_motion_files(path: String, keep: Vec<String>) -> Result<(), String> {
+    let png = files::wallpaper_png(&files::wallpaper_roots()?, &PathBuf::from(path))?;
+    files::remove_motion_files(&png, &keep)
 }
 
 /// The sidecar of a PNG the user opened, if it has one (reopening a Stipple wallpaper).

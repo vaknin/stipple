@@ -23,7 +23,7 @@ instead, with the art fitted (or filled) and the rest in the paper colour, so no
      whole screen, or a box you size and place; drag the art in the preview to move it, scroll
      over it to resize), Fit or Fill, Margin, **Crop to screen aspect**, Ink, Paper and Surround
      colours ("Invert rule" or the current Omarchy theme's colours).
-   - **Motion**: Twinkle, Shimmer, Pan and zoom, Colour over the day (see
+   - **Motion**: Twinkle, Shimmer, Pan and zoom, Columns, Colour over the day (see
      [Animated wallpapers](#animated-wallpapers)). The preview plays it; the pause button shows
      the still.
 3. **Save** (`S`) writes `~/Pictures/Wallpapers/<photo>-stipple-<W>x<H>.png` (never overwriting:
@@ -64,6 +64,17 @@ make a new version from it (any other change saves a new file).
   pixel per dot, the saved dot, the tone and the dots edge emphasis forced on. It sits in a hidden
   folder so `omarchy theme bg next` never shows it. The sidecar (format `stipple/2`) also holds the
   motion.
+- **`.stipple/<name>/frames.png`** and **`glyphs.png`** (Letters with Columns motion) are the
+  keyframes: the engine converts the photo at column counts spaced geometrically from From to To,
+  one per frame of the sweep (**Frame rate** × half of **One cycle**, fewer if all the cells would
+  not fit a 4096 × 6000 texture), plus the saved count so the sweep starts on the PNG. The
+  conversions run in parallel on up to 6 workers. The sweep goes there and back at an even pace,
+  so every keyframe shows for the same time. `frames.png` holds every
+  keyframe's cells as one byte each (1 + the glyph's index, 0 blank), in shelves; `glyphs.png` has
+  each letter used drawn once per power-of-two cell height (up to 256 px), three letters per texel
+  (R, G, B). The shader draws any keyframe at full resolution from these two small images, looking
+  at each pixel's cell and its 8 neighbours (letters overhang). The sidecar's `columns` holds each
+  keyframe's layout and place in `frames.png`, and the atlas levels.
 - **No SVG.** It can be regenerated from the JSON at any time; letters would need the font
   embedded; and an SVG would never be in Omarchy's rotation. (Whether `omarchy theme bg set`
   renders an SVG statically through qt6-svg was not tested.)
@@ -157,7 +168,8 @@ render a parked window anyway.
 - **Rust commands** (`src-tauri/src/commands.rs`), and nothing broader: `monitors`, `read_file`
   (PNG/JPEG/WebP ≤ 64 MB; the dialog and drag-and-drop give paths, not bytes), `save_png` (raw
   body, checks the PNG is exactly W×H), `save_sidecar` (replaced atomically), `save_field` (raw RGB
-  body, encoded as `field.png`), `read_sidecar` (reopening), `set_wallpaper` (only files in
+  body, encoded as `field.png`, `frames.png` or `glyphs.png`), `remove_motion_files` (the ones a
+  saved wallpaper no longer uses), `read_sidecar` (reopening), `set_wallpaper` (only files in
   `~/Pictures/Wallpapers` or the theme backgrounds), `add_to_theme_backgrounds`, `theme_colors`.
   The capability grants exactly these plus drag-and-drop events and the open dialog; no fs or
   shell plugin, no `core:default`.
@@ -181,6 +193,7 @@ underneath is the right still picture. A saved motion change reloads live.
 | Twinkle | Dots | a few dots blink, picked at random each tick |
 | Shimmer | Dots, Ordered dithering | the shading is re-dithered with fine noise |
 | Pan and zoom | Dots, Ordered dithering | the view drifts and slowly zooms inside the crop |
+| Columns | Letters | the column count sweeps From → To → From (any counts in 4–4096) |
 | Colour over the day | any style but colour blocks | ink and paper turn to night colours after dark |
 
 Frame 0 of every effect is the saved PNG. Motion stops behind a fullscreen window, after 60 s

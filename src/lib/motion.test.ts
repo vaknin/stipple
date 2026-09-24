@@ -2,8 +2,9 @@
 import { describe, expect, test } from 'bun:test';
 import { createConverter, type DotField } from '$typist/convert.js';
 import { ditherDots, encodeBraille } from '$typist/dither.js';
+import { COLS_MAX, COLS_MIN } from './layout';
 import {
-  coloursAt, defaultMotion, frameDots, frameGrid, hash, motionFor, motionFps, nightColours, nightWeight, packField,
+  cleanMotion, coloursAt, COLUMN_CELLS_MAX, columnFrameAt, columnKeyframes, columnPlan, columnStart, defaultMotion, frameDots, frameGrid, hash, motionFor, motionFps, nightColours, nightWeight, packField,
   type Motion,
 } from './motion';
 
@@ -146,11 +147,11 @@ describe('settings', () => {
     const all = with_(m => { m.twinkle.on = m.shimmer.on = m.pan.on = m.day.on = true; });
     const c = { ink: '#111111', paper: '#eeeeee' };
     const on = (m: Motion) => [m.twinkle.on, m.shimmer.on, m.pan.on, m.day.on];
-    expect(on(motionFor(all, { dots: true, ordered: true, mono: true }, c))).toEqual([true, true, true, true]);
-    expect(on(motionFor(all, { dots: true, ordered: false, mono: true }, c))).toEqual([true, false, false, true]);
-    expect(on(motionFor(all, { dots: false, ordered: false, mono: true }, c))).toEqual([false, false, false, true]);
-    expect(on(motionFor(all, { dots: false, ordered: false, mono: false }, c))).toEqual([false, false, false, false]);
-    const m = motionFor(all, { dots: true, ordered: true, mono: true }, c);
+    expect(on(motionFor(all, { dots: true, ordered: true, mono: true, letters: false }, c))).toEqual([true, true, true, true]);
+    expect(on(motionFor(all, { dots: true, ordered: false, mono: true, letters: false }, c))).toEqual([true, false, false, true]);
+    expect(on(motionFor(all, { dots: false, ordered: false, mono: true, letters: false }, c))).toEqual([false, false, false, true]);
+    expect(on(motionFor(all, { dots: false, ordered: false, mono: false, letters: false }, c))).toEqual([false, false, false, false]);
+    const m = motionFor(all, { dots: true, ordered: true, mono: true, letters: false }, c);
     expect([m.day.nightInk, m.day.nightPaper]).toEqual(['#eeeeee', '#111111']);
     all.day.nightInk = '#ff0000';
     expect(nightColours(all, c)).toEqual({ ink: '#ff0000', paper: '#111111' });
@@ -194,5 +195,62 @@ describe('colour over the day', () => {
     m.day.fade = 60;
     expect(coloursAt(m, c, S).ink).toBe('#808080');
     expect(coloursAt(defaultMotion(), c, 0)).toBe(c);
+  });
+});
+
+describe('columns', () => {
+  test('keyframes: geometric, deduped, in range, with the saved count', () => {
+    const k = columnKeyframes(10, 500, 40, 125);
+    expect(k[0]).toBe(10);
+    expect(k[k.length - 1]).toBe(500);
+    expect(k).toContain(125);
+    expect(new Set(k).size).toBe(k.length);
+    for (let i = 1; i < k.length; i++) expect(k[i]!).toBeGreaterThan(k[i - 1]!);
+    // from > to is the same range; a saved count outside it is not added
+    expect(columnKeyframes(500, 10, 40, 1000)).toEqual(columnKeyframes(10, 500, 40, 1000));
+    expect(columnKeyframes(10, 500, 40, 1000)).not.toContain(1000);
+    expect(columnKeyframes(1, 99999, 2, 0)).toEqual([COLS_MIN, COLS_MAX]);
+    expect(columnKeyframes(10, 12, 40, 11)).toEqual([10, 11, 12]);
+  });
+
+  test('the sweep starts on the saved frame and goes there and back', () => {
+    const k = columnKeyframes(10, 500, 40, 125), s = columnStart(k, 125);
+    expect(k[s]).toBe(125);
+    expect(columnStart(k, 5)).toBe(0);
+    expect(columnStart(k, 9000)).toBe(k.length - 1);
+    const n = k.length, P = 20;
+    expect(columnFrameAt(0, n, P, s)).toBe(s);
+    expect(columnFrameAt(0, n, P, 0)).toBe(0);
+    expect(columnFrameAt(P / 2, n, P, 0)).toBe(n - 1);
+    expect(columnFrameAt(P, n, P, 0)).toBe(0);
+    expect(columnFrameAt(-P, n, P, 0)).toBe(0);
+    // an even pace: every keyframe but the two ends shows for the same time
+    const time = new Map<number, number>();
+    for (let t = 0; t < P; t += 0.001) { const i = columnFrameAt(t, n, P, s); time.set(i, (time.get(i) ?? 0) + 0.001); }
+    expect(time.size).toBe(n);
+    const each = P / (2 * (n - 1));
+    for (let i = 1; i < n - 1; i++) expect(Math.abs(time.get(i)! - 2 * each)).toBeLessThan(0.01);
+    expect(columnFrameAt(3, 1, P, 0)).toBe(0);
+  });
+
+  test('frame rate, style support and older sidecars', () => {
+    const m = with_(x => { x.columns.on = true; x.columns.fps = 12; });
+    expect(motionFps(m)).toBe(12);
+    const c = { ink: '#111111', paper: '#eeeeee' };
+    expect(motionFor(m, { dots: false, ordered: false, mono: true, letters: true }, c).columns.on).toBe(true);
+    expect(motionFor(m, { dots: true, ordered: true, mono: true, letters: false }, c).columns.on).toBe(false);
+    expect(cleanMotion({ twinkle: { on: true } }).columns).toEqual(defaultMotion().columns);
+  });
+
+  test('a plan makes a keyframe per frame, capped by the cells', () => {
+    const rows = (k: number) => Math.round(k * 0.46);
+    const p = columnPlan({ on: true, from: 10, to: 500, fps: 15, period: 20 }, 156, rows);
+    expect(p.capped).toBe(false);
+    // 151 geometric steps, fewer where whole numbers collide near 10 columns
+    expect(p.cols.length).toBeGreaterThan(120);
+    expect(p.cols.length).toBeLessThanOrEqual(152);
+    const big = columnPlan({ on: true, from: 10, to: 4096, fps: 30, period: 600 }, 156, rows);
+    expect(big.capped).toBe(true);
+    expect(big.cells).toBeLessThanOrEqual(COLUMN_CELLS_MAX);
   });
 });

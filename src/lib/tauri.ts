@@ -50,10 +50,16 @@ export const saveSidecar = (pngPath: string, json: string) =>
   invoke<string>('save_sidecar', { pngPath, json });
 
 /** Writes `<dir>/.stipple/<stem>/field.png` from a packed RGB dot field (motion.packField). */
-export const saveField = (pngPath: string, rgb: Uint8Array, width: number, height: number) =>
+/** One motion texture of a saved wallpaper: `.stipple/<stem>/<name>.png`. */
+export const saveField = (pngPath: string, rgb: Uint8Array, width: number, height: number,
+  name: 'field' | 'frames' | 'glyphs' = 'field') =>
   invoke<string>('save_field', rgb, {
-    headers: { 'x-png-path': encodeURIComponent(pngPath), 'x-size': `${width}x${height}` },
+    headers: { 'x-png-path': encodeURIComponent(pngPath), 'x-size': `${width}x${height}`, 'x-name': name },
   });
+
+/** Remove the motion textures of a saved wallpaper other than `keep`. */
+export const removeMotionFiles = (pngPath: string, keep: ('field' | 'frames' | 'glyphs')[]) =>
+  invoke<void>('remove_motion_files', { path: pngPath, keep });
 
 export interface SidecarFile {
   json: string;

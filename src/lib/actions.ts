@@ -3,26 +3,74 @@
 // Output: ~/Pictures/Wallpapers/<photo>-stipple-<W>x<H>.png (never overwritten; -2, -3… on
 // collision) plus <same name>.stipple.json, the grid and every setting, so a later renderer (an
 // animated one, an SVG export) can redraw or re-characterise the art without the photo. Dots also
-// get their dot field, .stipple/<same name>/field.png, which the shell plugin animates.
+// get their dot field, .stipple/<same name>/field.png, which the shell plugin animates; Letters
+// with Columns motion get their keyframes and glyphs there (frames.png, glyphs.png).
 // Changing only the motion of a saved wallpaper rewrites its sidecar: the plugin picks it up live.
 
 import { gridLines, type Grid } from '$typist/convert.js';
 import { cellAspect } from './engine/engine';
-import { baseName, currentGrid, layoutFor, schedule } from './pipeline';
+import { atlasLevels, glyphAtlas, packFrames } from './letterframes';
+import { baseName, columnFrames, currentGrid, layoutFor, schedule } from './pipeline';
 import type { Layout } from './layout';
 import { motionFor, packField, supportFor, type Motion } from './motion';
 import { DOT_R, FONT, renderPng, type Colours } from './render';
 import { app, effectiveCrop, type Snapshot } from './state.svelte';
-import { addToThemeBackgrounds, errorText, saveField, savePng, saveSidecar, setWallpaper } from './tauri';
+import { addToThemeBackgrounds, errorText, removeMotionFiles, saveField, savePng, saveSidecar, setWallpaper } from './tauri';
 
 export const ENGINE = { name: 'typist', repo: 'https://github.com/winchxyz/typist', commit: '7081dce' };
 const APP_VERSION = '0.1.0';
 export const FORMAT = 'stipple/2';
 
-/** `.stipple/<stem>/field.png`, relative to the wallpaper's folder. */
-export const fieldFile = (pngPath: string) => `.stipple/${baseName(pngPath).replace(/\.png$/i, '')}/field.png`;
+/** `.stipple/<stem>/<name>.png`, relative to the wallpaper's folder. */
+const motionFile = (pngPath: string, name: string) => `.stipple/${baseName(pngPath).replace(/\.png$/i, '')}/${name}.png`;
+export const fieldFile = (pngPath: string) => motionFile(pngPath, 'field');
 
-function sidecar(grid: Grid, snap: Snapshot, motion: Motion, colours: Colours, pngPath: string, layout: Layout) {
+/**
+ * Write frames.png and glyphs.png for Columns motion and return the sidecar's `columns` (see
+ * letterframes.ts): every keyframe's layout and place in frames.png, the glyph atlas levels.
+ */
+async function saveColumns(pngPath: string, wall: Snapshot['wall'], mode: Grid['mode']) {
+  // the keyframes may still be building: show how far along instead of a bare "Saving…"
+  const progress = () => {
+    const p = app.framesProgress;
+    if (p) app.busy = `Rendering frames ${p.done}/${p.total}…`;
+  };
+  progress();
+  const tick = window.setInterval(progress, 100);
+  let built;
+  try {
+    built = await columnFrames();
+  } finally {
+    clearInterval(tick);
+    app.busy = 'Saving…';
+  }
+  const { grids, start } = built;
+  const layouts = grids.map(g => layoutFor(g, wall.width, wall.height, wall));
+  const packed = packFrames(grids, layouts);
+  const atlas = glyphAtlas(packed.glyphs, cellAspect(mode), atlasLevels(layouts.map(l => l.cellH)), FONT);
+  await saveField(pngPath, packed.rgb, packed.width, packed.height, 'frames');
+  await saveField(pngPath, atlas.rgb, atlas.width, atlas.height, 'glyphs');
+  return {
+    start,
+    frames: packed.frames,
+    framesFile: motionFile(pngPath, 'frames'),
+    glyphsFile: motionFile(pngPath, 'glyphs'),
+    glyphs: { count: packed.glyphs.length, cp: packed.glyphs, width: atlas.width, height: atlas.height, levels: atlas.levels },
+  };
+}
+
+type Columns = Awaited<ReturnType<typeof saveColumns>>;
+
+/** After the sidecar: remove the textures it no longer names (Columns turned off, say). */
+function dropUnused(pngPath: string, grid: Grid, columns: Columns | null) {
+  return removeMotionFiles(pngPath, [
+    ...(grid.field ? ['field' as const] : []),
+    ...(columns ? ['frames' as const, 'glyphs' as const] : []),
+  ]);
+}
+
+function sidecar(grid: Grid, snap: Snapshot, motion: Motion, colours: Colours, pngPath: string, layout: Layout,
+  columns: Columns | null) {
   const loaded = app.loaded!;
   const { width, height } = snap.wall;
   return {
@@ -52,6 +100,8 @@ function sidecar(grid: Grid, snap: Snapshot, motion: Motion, colours: Colours, p
     motionSettings: snap.motion,
     /** The dot field (Dots only): one texel per dot, see motion.ts packField. */
     field: grid.field ? { file: fieldFile(pngPath), width: grid.field.width, height: grid.field.height } : null,
+    /** Columns motion (Letters): the keyframes the plugin draws, see letterframes.ts. */
+    columns,
     layout: {
       cellW: layout.cellW, cellH: layout.cellH, x: layout.x, y: layout.y, artW: layout.artW, artH: layout.artH,
       inner: layout.inner, clip: layout.clip, cellAspect: cellAspect(grid.mode), font: FONT, dotR: DOT_R,
@@ -95,14 +145,18 @@ export async function save(): Promise<string | null> {
     let path: string;
     if (prev) {
       path = prev.path;
-      await saveSidecar(path, JSON.stringify(sidecar(grid, snap, motion, colours, path, layout)));
+      const columns = motion.columns.on ? await saveColumns(path, snap.wall, grid.mode) : null;
+      await saveSidecar(path, JSON.stringify(sidecar(grid, snap, motion, colours, path, layout, columns)));
+      await dropUnused(path, grid, columns);
       app.say('ok', `Updated the motion of ${baseName(path)}.`);
     } else {
       const png = await renderPng(grid, layout, colours, width, height);
       path = await savePng(new Uint8Array(await png.arrayBuffer()), name, width, height);
       // the field before the sidecar: the plugin loads both when the sidecar appears
       if (grid.field) await saveField(path, packField(grid.field), grid.field.width, grid.field.height);
-      await saveSidecar(path, JSON.stringify(sidecar(grid, snap, motion, colours, path, layout)));
+      const columns = motion.columns.on ? await saveColumns(path, snap.wall, grid.mode) : null;
+      await saveSidecar(path, JSON.stringify(sidecar(grid, snap, motion, colours, path, layout, columns)));
+      await dropUnused(path, grid, columns);
       app.say('ok', `Saved ${baseName(path)} in ~/Pictures/Wallpapers.`);
     }
     app.saved = { path, key, motion: motionKey };

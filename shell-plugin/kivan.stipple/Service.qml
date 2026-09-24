@@ -51,11 +51,36 @@ Item {
   readonly property string dir: root.current.replace(/\/[^/]*$/, "")
   readonly property string sidecarPath: root.isPng ? root.dir + "/" + root.stem + ".stipple.json" : ""
   readonly property string fieldPath: root.isPng ? root.dir + "/.stipple/" + root.stem + "/field.png" : ""
+  readonly property string framesPath: root.isPng ? root.dir + "/.stipple/" + root.stem + "/frames.png" : ""
+  readonly property string glyphsPath: root.isPng ? root.dir + "/.stipple/" + root.stem + "/glyphs.png" : ""
 
   readonly property var motion: root.spec ? root.spec.motion : null
   readonly property bool dots: !!root.spec && !!root.motion && root.spec.grid.mode === "braille"
     && (root.motion.twinkle.on || root.motion.shimmer.on || root.motion.pan.on)
+  /** Columns (Letters): keyframes at other column counts, drawn from frames.png and glyphs.png. */
+  readonly property bool letters: !!root.spec && !!root.motion && !!root.motion.columns && root.motion.columns.on
+    && !!root.spec.columns && root.spec.columns.frames.length > 0
   readonly property bool idle: idleMonitor.isIdle
+
+  /** The keyframe shown at time t: there and back once per period at an even pace, from `start` (motion.ts columnFrameAt). */
+  function columnFrameAt(t, n, period, start) {
+    if (n < 2) return 0
+    const P = Math.max(period, 1)
+    const s0 = Math.min(1, Math.max(0, start / (n - 1)))
+    const u = (((t / P + s0 / 2) % 1) + 1) % 1
+    const i = Math.round((n - 1) * (u < 0.5 ? 2 * u : 2 - 2 * u))
+    return Math.min(n - 1, Math.max(0, i))
+  }
+
+  /** Glyph levels to draw a cell `h` px tall with: the smallest level at least h, the next one down, and its weight. */
+  function levelsFor(h) {
+    const ls = root.spec.columns.glyphs.levels
+    let a = ls.length - 1
+    for (let i = 0; i < ls.length; i++) if (ls[i].cellH >= h) { a = i; break }
+    const b = Math.max(0, a - 1)
+    const w = a === b || h >= ls[a].cellH ? 0 : Math.min(1, Math.log(ls[a].cellH / h) / Math.log(ls[a].cellH / ls[b].cellH))
+    return { a: ls[a], b: ls[b], w: w }
+  }
 
   // -------------------------------------------------------------------- colours
 
@@ -114,6 +139,9 @@ Item {
   /** Frames per second the effects ask for (0: nothing moves between colour updates). */
   readonly property real baseFps: {
     const m = root.motion
+    // Columns: a new keyframe every period / (2 (n - 1)) s, ticked four times as often so each
+    // shows for its own time within a quarter frame (a tick that finds no change draws nothing)
+    if (m && root.letters) return Math.min(60, Math.max(1, 8 * (root.spec.columns.frames.length - 1) / Math.max(m.columns.period, 1)))
     if (!m || !root.dots) return 0
     if (m.pan.on) return m.pan.fps
     return Math.max(m.twinkle.on ? m.twinkle.rate : 0, m.shimmer.on ? m.shimmer.rate : 0)
@@ -278,7 +306,7 @@ Item {
     let s = null
     try { s = JSON.parse(raw) } catch (e) { s = null }
     const m = s && s.motion
-    const on = !!m && (m.twinkle.on || m.shimmer.on || m.pan.on || m.day.on)
+    const on = !!m && (m.twinkle.on || m.shimmer.on || m.pan.on || m.day.on || (!!m.columns && m.columns.on))
     const colourBlocks = !!s && !!s.grid && !!s.grid.fg
     if (!s || !/^stipple\//.test(String(s.format)) || !on || colourBlocks) {
       root.spec = null
@@ -313,7 +341,7 @@ Item {
         paused: root.paused,
         idle: root.idle,
         onBattery: UPower.onBattery,
-        screens: surfaces.instances.map(w => ({ name: w.screen ? w.screen.name : "", shown: w.visible, art: w.artStatus, field: w.fieldStatus, fps: w.fps, fullscreen: w.fullscreen, windows: w.hasWindows, covered: Math.round(w.covered * 1000) / 1000, frames: w.frameCount })),
+        screens: surfaces.instances.map(w => ({ name: w.screen ? w.screen.name : "", shown: w.visible, art: w.artStatus, field: w.fieldStatus, fps: w.fps, keyframe: w.keyframe, fullscreen: w.fullscreen, windows: w.hasWindows, covered: Math.round(w.covered * 1000) / 1000, frames: w.frameCount })),
       })
     }
 
@@ -340,6 +368,7 @@ Item {
       readonly property int artStatus: artImg.status
       readonly property int fieldStatus: fieldImg.status
       readonly property bool ready: artImg.status === Image.Ready && (!root.dots || fieldImg.status === Image.Ready)
+        && (!root.letters || (framesImg.status === Image.Ready && glyphsImg.status === Image.Ready))
       visible: !!root.spec && ready
       color: root.paper
       anchors { top: true; bottom: true; left: true; right: true }
@@ -361,6 +390,8 @@ Item {
       property vector4d clock: Qt.vector4d(0, 0, 0, 0)
       /** Frames asked for so far (status, to check the pacing). */
       property int frameCount: 0
+      /** Columns: the keyframe shown. */
+      property int keyframe: root.letters ? root.spec.columns.start : 0
 
       IdleInhibitor {
         window: win
@@ -378,6 +409,14 @@ Item {
         const m = root.motion
         if (!m) return
         const t = root.frozen >= 0 ? root.frozen : Math.max(0, (Date.now() - root.epoch) / 1000)
+        if (root.letters) {
+          const k = root.columnFrameAt(t, root.spec.columns.frames.length, m.columns.period, root.spec.columns.start)
+          if (k !== win.keyframe) {
+            win.keyframe = k
+            win.frameCount++
+          }
+          return
+        }
         const c = Qt.vector4d(m.pan.on ? t : 0, m.twinkle.on ? Math.floor(t * m.twinkle.rate) : 0,
           m.shimmer.on ? Math.floor(t * m.shimmer.rate) : 0, 0)
         if (c.x !== win.clock.x || c.y !== win.clock.y || c.z !== win.clock.z) {
@@ -417,6 +456,24 @@ Item {
         source: root.dots ? "file://" + encodeURI(root.fieldPath) + "?v=" + root.version : ""
       }
 
+      Image {
+        id: framesImg
+        visible: false
+        asynchronous: false
+        cache: false
+        smooth: false
+        source: root.letters ? "file://" + encodeURI(root.framesPath) + "?v=" + root.version : ""
+      }
+
+      Image {
+        id: glyphsImg
+        visible: false
+        asynchronous: false
+        cache: false
+        smooth: false
+        source: root.letters ? "file://" + encodeURI(root.glyphsPath) + "?v=" + root.version : ""
+      }
+
       ShaderEffect {
         id: shader
         anchors.fill: parent
@@ -432,7 +489,7 @@ Item {
         property color paper: root.paper
         property color srcInk: sp ? sp.colours.ink : "black"
         property color srcPaper: sp ? sp.colours.paper : "white"
-        property vector4d canvas: Qt.vector4d(cw, ch, root.dots ? 1 : 0, sp ? (sp.motion.seed >>> 0) % 65536 : 0)
+        property vector4d canvas: Qt.vector4d(cw, ch, root.letters ? 2 : root.dots ? 1 : 0, sp ? (sp.motion.seed >>> 0) % 65536 : 0)
         property vector4d map: Qt.vector4d(width / k, height / k, cw / 2 - width / k / 2, ch / 2 - height / k / 2)
         property vector4d lattice: sp ? Qt.vector4d(sp.layout.x, sp.layout.y, sp.layout.cellW / 2, sp.layout.cellH / 4) : Qt.vector4d(0, 0, 1, 1)
         property vector4d clipRect: {
@@ -457,8 +514,19 @@ Item {
         }
         property color surround: root.surround
         property vector4d clock: win.clock
+        // Columns: the keyframe shown and the two glyph levels nearest its cell height
+        readonly property var kf: root.letters ? root.spec.columns.frames[Math.min(win.keyframe, root.spec.columns.frames.length - 1)] : null
+        readonly property var lv: kf ? root.levelsFor(kf.cellH) : null
+        property vector4d fcell: kf ? Qt.vector4d(kf.x, kf.y, kf.cellW, kf.cellH) : Qt.vector4d(0, 0, 1, 1)
+        property vector4d fgrid: kf ? Qt.vector4d(kf.cols, kf.rows, kf.ax, kf.ay) : Qt.vector4d(0, 0, 0, 0)
+        property vector4d lvA: lv ? Qt.vector4d(lv.a.y, lv.a.cellW, lv.a.cellH, lv.a.tileW) : Qt.vector4d(0, 1, 1, 1)
+        property vector4d lvB: lv ? Qt.vector4d(lv.b.y, lv.b.cellW, lv.b.cellH, lv.b.tileW) : Qt.vector4d(0, 1, 1, 1)
+        property vector4d lvX: lv ? Qt.vector4d(lv.a.tileH, lv.a.perRow, lv.b.tileH, lv.b.perRow) : Qt.vector4d(1, 1, 1, 1)
+        property vector4d lvMix: Qt.vector4d(lv ? lv.w : 0, 0, 0, 0)
         property var fieldTex: fieldImg
         property var artTex: artImg
+        property var framesTex: framesImg
+        property var glyphTex: glyphsImg
       }
     }
   }

@@ -190,12 +190,20 @@ pub fn sidecar_path(png: &Path) -> Result<PathBuf, String> {
     Ok(png.with_file_name(format!("{}.stipple.json", png_stem(png)?)))
 }
 
-/// `<dir>/.stipple/<stem>/field.png` for `<dir>/<stem>.png`.
-pub fn field_path(png: &Path) -> Result<PathBuf, String> {
+/// The textures the animated wallpaper reads: the Dots field, and the Letters Columns keyframes
+/// and their glyph atlas.
+pub const MOTION_FILES: &[&str] = &["field", "frames", "glyphs"];
+
+/// `<dir>/.stipple/<stem>/<name>.png` for `<dir>/<stem>.png`, `name` one of MOTION_FILES.
+pub fn motion_path(png: &Path, name: &str) -> Result<PathBuf, String> {
+    if !MOTION_FILES.contains(&name) {
+        return Err(format!("{name} is not a motion file"));
+    }
     let stem = png_stem(png)?;
     let dir = png.parent().ok_or("bad path")?;
-    Ok(dir.join(".stipple").join(stem).join("field.png"))
+    Ok(dir.join(".stipple").join(stem).join(format!("{name}.png")))
 }
+
 
 /// A wallpaper PNG this app may write beside: an existing `.png` file somewhere under one of
 /// `roots` (the output folder, the theme backgrounds). Returns the canonical path.
@@ -261,12 +269,37 @@ pub fn encode_field(size: (u32, u32), rgb: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// Write the dot field of a wallpaper PNG (replacing it).
-pub fn save_field(png: &Path, size: (u32, u32), rgb: &[u8]) -> Result<PathBuf, String> {
+/// Write one motion texture of a wallpaper PNG (replacing it): `name` is one of MOTION_FILES.
+pub fn save_field(png: &Path, name: &str, size: (u32, u32), rgb: &[u8]) -> Result<PathBuf, String> {
+    let path = motion_path(png, name)?;
     let bytes = encode_field(size, rgb)?;
-    let path = field_path(png)?;
     write_atomic(&path, &bytes)?;
     Ok(path)
+}
+
+/// Remove the motion textures of a wallpaper PNG that are not in `keep` (a style or effect that
+/// no longer uses them). Missing files are fine. Folders left empty go too.
+pub fn remove_motion_files(png: &Path, keep: &[String]) -> Result<(), String> {
+    let mut dir = None;
+    for name in MOTION_FILES {
+        let path = motion_path(png, name)?;
+        dir = path.parent().map(Path::to_path_buf);
+        if keep.iter().any(|k| k == name) {
+            continue;
+        }
+        match fs::remove_file(&path) {
+            Err(e) if e.kind() != ErrorKind::NotFound => return Err(format!("{}: {e}", path.display())),
+            _ => {}
+        }
+    }
+    // remove_dir only removes an empty folder: `<stem>`, then `.stipple`
+    if let Some(dir) = dir
+        && fs::remove_dir(&dir).is_ok()
+        && let Some(up) = dir.parent()
+    {
+        let _ = fs::remove_dir(up);
+    }
+    Ok(())
 }
 
 /// Copy a file into `dest_dir` under its own name (suffixed on collision).
@@ -279,7 +312,7 @@ pub fn copy_unique(src: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// Copy a wallpaper into `dest_dir` with its sidecar and dot field, under the (possibly suffixed)
+/// Copy a wallpaper into `dest_dir` with its sidecar and motion textures, under the (possibly suffixed)
 /// new name. The copied sidecar's `image.file` names the copy.
 pub fn copy_wallpaper(png: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
     let dest = copy_unique(png, dest_dir)?;
@@ -296,10 +329,12 @@ pub fn copy_wallpaper(png: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
         };
         save_sidecar(&dest, &json)?;
     }
-    let field = field_path(png)?;
-    if field.is_file() {
-        let bytes = fs::read(&field).map_err(|e| format!("{}: {e}", field.display()))?;
-        write_atomic(&field_path(&dest)?, &bytes)?;
+    for name in MOTION_FILES {
+        let src = motion_path(png, name)?;
+        if src.is_file() {
+            let bytes = fs::read(&src).map_err(|e| format!("{}: {e}", src.display()))?;
+            write_atomic(&motion_path(&dest, name)?, &bytes)?;
+        }
     }
     Ok(dest)
 }
@@ -401,7 +436,7 @@ mod tests {
         let d = tmp("field");
         let a = save_png(&d, "cat", (4, 4), &png(4, 4)).unwrap();
         let rgb: Vec<u8> = (0..6 * 8 * 3).map(|i| (i * 37 % 256) as u8).collect();
-        let f = save_field(&a, (6, 8), &rgb).unwrap();
+        let f = save_field(&a, "field", (6, 8), &rgb).unwrap();
         assert_eq!(f, d.join(".stipple/cat-stipple-4x4/field.png"));
         let dec = png::Decoder::new(std::io::BufReader::new(File::open(&f).unwrap()));
         let mut r = dec.read_info().unwrap();
@@ -409,9 +444,16 @@ mod tests {
         let info = r.next_frame(&mut buf).unwrap();
         assert_eq!((info.width, info.height, info.color_type), (6, 8, png::ColorType::Rgb));
         assert_eq!(&buf[..info.buffer_size()], &rgb[..]);
-        assert!(save_field(&a, (6, 8), &rgb[1..]).is_err());
-        assert!(save_field(&a, (0, 8), &[]).is_err());
-        assert!(save_field(&a, (MAX_FIELD + 1, 1), &vec![0; (MAX_FIELD as usize + 1) * 3]).is_err());
+        assert!(save_field(&a, "field", (6, 8), &rgb[1..]).is_err());
+        assert!(save_field(&a, "field", (0, 8), &[]).is_err());
+        assert!(save_field(&a, "field", (MAX_FIELD + 1, 1), &vec![0; (MAX_FIELD as usize + 1) * 3]).is_err());
+        assert!(save_field(&a, "../x", (6, 8), &rgb).is_err());
+        let fr = save_field(&a, "frames", (6, 8), &rgb).unwrap();
+        assert_eq!(fr, d.join(".stipple/cat-stipple-4x4/frames.png"));
+        let gl = save_field(&a, "glyphs", (6, 8), &rgb).unwrap();
+        remove_motion_files(&a, &["field".into(), "frames".into()]).unwrap();
+        assert!(f.exists() && fr.exists() && !gl.exists());
+        remove_motion_files(&a, &["field".into(), "frames".into()]).unwrap();
 
         // a copy takes its sidecar and field along under the new name
         save_sidecar(&a, "{\"image\":{\"file\":\"cat-stipple-4x4.png\",\"width\":4},\"v\":1}").unwrap();
@@ -422,16 +464,21 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&read_sidecar(&c).unwrap().unwrap()).unwrap();
         assert_eq!(v["image"]["file"], "cat-stipple-4x4-2.png");
         assert_eq!(v["image"]["width"], 4);
-        assert_eq!(fs::read(field_path(&c).unwrap()).unwrap(), fs::read(&f).unwrap());
+        assert_eq!(fs::read(motion_path(&c, "field").unwrap()).unwrap(), fs::read(&f).unwrap());
+        assert_eq!(fs::read(motion_path(&c, "frames").unwrap()).unwrap(), fs::read(&fr).unwrap());
+        assert!(!motion_path(&c, "glyphs").unwrap().exists());
         assert_eq!(
-            field_path(&c).unwrap(),
+            motion_path(&c, "field").unwrap(),
             theme.join(".stipple/cat-stipple-4x4-2/field.png")
         );
         // a plain PNG copies alone
         let plain = save_png(&d, "dog", (4, 4), &png(4, 4)).unwrap();
         let p = copy_wallpaper(&plain, &theme).unwrap();
         assert_eq!(read_sidecar(&p).unwrap(), None);
-        assert!(!field_path(&p).unwrap().exists());
+        assert!(!motion_path(&p, "field").unwrap().exists());
+        // removing every texture removes the emptied folders
+        remove_motion_files(&c, &[]).unwrap();
+        assert!(!theme.join(".stipple").exists());
         let _ = fs::remove_dir_all(&d);
         let _ = fs::remove_dir_all(&theme);
     }

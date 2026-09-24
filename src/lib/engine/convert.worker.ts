@@ -1,5 +1,6 @@
 // The Typist converters off the main thread: one for the preview, one for the look thumbnails
-// (sharing the decoded photo). Messages from engine.ts workerBackend.
+// (sharing the decoded photo). Messages from engine.ts workerBackend; FramePool runs several of
+// these workers for the Columns keyframes, each using the main converter.
 
 import { createConverter, type ConvertOpts, type Grid, type Pixels } from '$typist/convert.js';
 import type { Crop } from '$typist/tone.js';

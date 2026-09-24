@@ -67,8 +67,8 @@ const { look: _look, ...TONE_CONTROLS } = TONE_DEFAULTS;
 export const TONE_CONTROL_DEFAULTS: Readonly<ToneControls> = Object.freeze(TONE_CONTROLS);
 
 export const defaultDoc = (): Doc => ({
-  mode: 'braille', look: 'photo', dither: 'atkinson', ascii: 'shape', blocks: 'quad', color: false,
-  cols: null, tone: { ...TONE_CONTROL_DEFAULTS }, crop: { ...CROP_DEFAULTS },
+  mode: 'ascii', look: 'photo', dither: 'atkinson', ascii: 'shape', blocks: 'quad', color: false,
+  cols: null, tone: { ...TONE_CONTROL_DEFAULTS, invert: true }, crop: { ...CROP_DEFAULTS },
 });
 
 export const defaultWall = (): Wall => ({
@@ -153,6 +153,8 @@ class AppState {
   motion: Motion = $state(defaultMotion());
   /** The preview plays the motion. */
   playing = $state(true);
+  /** Columns keyframes built so far for the current settings (null: none being built). */
+  framesProgress: { done: number; total: number } | null = $state.raw(null);
   /** Minute of the day the preview shows Colour over the day at (null = now). */
   previewMinute: number | null = $state(null);
   loaded: LoadedPhoto | null = $state.raw(null);

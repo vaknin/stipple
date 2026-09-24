@@ -2,8 +2,9 @@
   // Motion for the animated wallpaper (the kivan.stipple shell plugin plays it; the PNG stays the
   // still). Each effect keeps its settings when the style cannot play it, so switching back to
   // Dots or Ordered brings it back. The preview plays what will be saved (pipeline.previewMotion).
+  import { COLS_MAX, COLS_MIN } from '../layout';
   import { anyMotion, defaultMotion, hhmm, motionFps, nightColours, type BatteryRule, type Motion, type Rate } from '../motion';
-  import { previewMotion } from '../pipeline';
+  import { currentPlan, previewMotion } from '../pipeline';
   import { app } from '../state.svelte';
   import Icon from './Icon.svelte';
   import RisoInks from './RisoInks.svelte';
@@ -22,8 +23,10 @@
   const perSec = (v: number) => `${v}/s`;
   const secs = (v: number) => (v >= 120 ? `${Math.round(v / 6) / 10} min` : `${Math.round(v)} s`);
 
-  type Effect = 'twinkle' | 'shimmer' | 'pan' | 'day';
-  const NAMES: Record<Effect, string> = { twinkle: 'Twinkle', shimmer: 'Shimmer', pan: 'Pan and zoom', day: 'Colour over the day' };
+  type Effect = 'twinkle' | 'shimmer' | 'pan' | 'day' | 'columns';
+  const NAMES: Record<Effect, string> = {
+    twinkle: 'Twinkle', shimmer: 'Shimmer', pan: 'Pan and zoom', day: 'Colour over the day', columns: 'Columns',
+  };
 
   function toggle(e: Effect, on: boolean) {
     app.motion[e].on = on;
@@ -43,6 +46,24 @@
     app.doc.cols = null;
     app.commit('Style');
   }
+
+  function useLetters() {
+    app.doc.mode = 'ascii';
+    app.commit('Style');
+  }
+
+  /** From / To as typed numbers (Enter or leaving the field applies). */
+  function setEnd(k: 'from' | 'to', el: HTMLInputElement) {
+    const v = Math.round(Number(el.value));
+    if (!Number.isFinite(v) || el.value.trim() === '') { el.value = String(app.motion.columns[k]); return; }
+    const next = Math.max(COLS_MIN, Math.min(COLS_MAX, v));
+    el.value = String(next);
+    if (next === app.motion.columns[k]) return;
+    app.motion.columns[k] = next;
+    app.commit(k === 'from' ? 'Columns from' : 'Columns to');
+  }
+
+  const plan = $derived(m.columns.on && s.letters ? currentPlan() : null);
 
   function useOrdered() {
     app.doc.dither = 'bayer';
@@ -77,6 +98,8 @@
   const shownMinute = $derived(app.previewMinute ?? clock);
 
   const status = $derived.by(() => {
+    const p = app.framesProgress;
+    if (saved.columns.on && p) return `Rendering frames ${p.done}/${p.total}…`;
     if (!anyMotion(saved)) return anyMotion(m) ? 'This style cannot play the chosen effects' : 'No motion: the wallpaper stays still';
     if (fps > 0) return `Animated at ${fps} fps`;
     return 'Still between colour changes';
@@ -156,6 +179,48 @@
       </button>
     </div>
   {/if}
+</div>
+
+<div class="field">
+  <div class="label">Letters</div>
+  {#if !s.letters}
+    <p class="need" role="status">
+      <Icon name="alert" size={14} />
+      <span>Columns redraws the letters at another column count each frame, so it needs the Letters style.
+        <button type="button" class="link" onclick={useLetters}>Use Letters</button></span>
+    </p>
+  {/if}
+
+  <div class="fx">
+    <Switch label="Columns" checked={m.columns.on && s.letters} disabled={!s.letters}
+      hint="The column count sweeps from one number to another and back" onchange={on => toggle('columns', on)} />
+    {#if m.columns.on && s.letters}
+      <div class="ends">
+        {#each [['from', 'From'], ['to', 'To']] as const as [k, label] (k)}
+          <label>
+            <span class="dim">{label}</span>
+            <input type="number" inputmode="numeric" min={COLS_MIN} max={COLS_MAX} step="1" value={m.columns[k]}
+              title="{COLS_MIN}–{COLS_MAX} columns. Enter to apply."
+              onchange={e => setEnd(k, e.currentTarget)}
+              onkeydown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); setEnd(k, e.currentTarget); e.currentTarget.select(); }
+                if (e.key === 'Escape') { e.currentTarget.value = String(m.columns[k]); e.currentTarget.blur(); }
+              }}
+              onfocus={e => e.currentTarget.select()} />
+          </label>
+        {/each}
+      </div>
+      <Slider label="Frame rate" min={2} max={30} step={1} value={m.columns.fps} def={DEF.columns.fps}
+        format={v => `${v} fps`} {...slide('columns', 'fps', 'Columns frame rate')} />
+      <Slider label="One cycle" min={2} max={600} step={1} value={m.columns.period} def={DEF.columns.period}
+        format={secs} {...slide('columns', 'period', 'Columns cycle')} />
+      {#if plan}
+        <p class="hint">{plan.cols.length} frames from {plan.cols[0]} to {plan.cols[plan.cols.length - 1]} columns,
+          there and back. It starts on the saved picture's {app.cols} columns{plan.cols.includes(app.cols) ? '' : ' (outside the range: the nearer end)'}.
+          {#if plan.capped}Fewer frames than the frame rate asks for: all of them must fit one texture. A shorter cycle or a lower To keeps it smooth.{/if}</p>
+      {/if}
+    {/if}
+  </div>
 </div>
 
 <div class="field">
@@ -306,6 +371,9 @@
     user-select: text;
     -webkit-user-select: text;
   }
+  .ends { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .ends label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+  .ends input { height: 28px; font-size: 13px; text-align: right; }
   .scrub { display: flex; align-items: flex-end; gap: 8px; }
   .scrub > :global(.slider) { flex: 1; }
   .sub { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }

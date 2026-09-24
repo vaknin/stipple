@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "test": "bun test src/lib/layout.test.ts src/lib/motion.test.ts src/lib/engine",
+    "test": "bun test src/lib/layout.test.ts src/lib/motion.test.ts src/lib/letterframes.test.ts src/lib/engine",
     "test:engine": "node --test 'src/lib/typist/tests/*.test.mjs'",
     "tauri": "tauri"
   },

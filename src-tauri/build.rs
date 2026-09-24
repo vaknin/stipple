@@ -6,6 +6,7 @@ const COMMANDS: &[&str] = &[
     "save_png",
     "save_sidecar",
     "save_field",
+    "remove_motion_files",
     "read_sidecar",
     "set_wallpaper",
     "add_to_theme_backgrounds",

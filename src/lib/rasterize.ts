@@ -192,11 +192,11 @@ function scratchCtx(w: number, h: number): CanvasRenderingContext2D {
   return ctx;
 }
 
-/** raster.js fitFont: the font size whose advance is the cell width, the em box centred. */
-function glyphSet(family: string, cellW: number, cellH: number): GlyphSet {
-  const key = `${family}|${cellW}|${cellH}`;
-  let set = glyphSets.get(key);
-  if (set) return set;
+/**
+ * raster.js fitFont: the font size whose advance is the cell width, the em box centred. `base` is
+ * the baseline below the cell's top (letterframes.ts draws its glyph atlas with the same fit).
+ */
+export function fitFont(family: string, cellW: number, cellH: number): { css: string; base: number } {
   const ctx = scratchCtx(8, 8);
   ctx.font = `100px ${family}`;
   const adv = ctx.measureText('M').width / 100 || 0.6;
@@ -204,17 +204,26 @@ function glyphSet(family: string, cellW: number, cellH: number): GlyphSet {
   ctx.font = `${px}px ${family}`;
   const mm = ctx.measureText('Mg');
   const asc = mm.fontBoundingBoxAscent ?? px * 0.8, desc = mm.fontBoundingBoxDescent ?? px * 0.2;
+  return { css: `${px}px ${family}`, base: (cellH + asc - desc) / 2 };
+}
+
+function glyphSet(family: string, cellW: number, cellH: number): GlyphSet {
+  const key = `${family}|${cellW}|${cellH}`;
+  let set = glyphSets.get(key);
+  if (set) return set;
+  const fit = fitFont(family, cellW, cellH);
   // room for glyphs that overhang their cell (@, W, descenders)
   const ovX = Math.ceil(cellW * 0.5) + 2, ovY = Math.ceil(cellH * 0.35) + 2;
   set = {
-    css: `${px}px ${family}`,
-    base: (cellH + asc - desc) / 2,
+    css: fit.css,
+    base: fit.base,
     ovX, ovY,
     bw: Math.ceil(cellW) + 2 * ovX + 1,
     bh: Math.ceil(cellH) + 2 * ovY + 1,
     masks: new Map(),
   };
-  if (glyphSets.size > 6) glyphSets.clear();
+  // the Columns preview cycles through a cell size per keyframe
+  if (glyphSets.size > 160) glyphSets.clear();
   glyphSets.set(key, set);
   return set;
 }

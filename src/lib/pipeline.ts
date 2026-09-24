@@ -7,7 +7,10 @@ import { autoCrop, decodeImage, ImageError, imageErrorMessage, type Photo } from
 import { LOOKS, type LookId } from '$typist/tone.js';
 import { cellAspect, Engine, rowsFor, THUMB_COLS, type ConvertRequest } from './engine/engine';
 import { layoutArt, type Layout } from './layout';
-import { cleanMotion, coloursAt, dotMotion, frameGrid, motionFps, packField, type Motion } from './motion';
+import {
+  cleanMotion, coloursAt, columnFrameAt, columnPlan, columnStart, dotMotion, frameGrid, motionFps, packField,
+  type Motion,
+} from './motion';
 import { perf } from './perf.svelte';
 import { surfaceCache } from './rasterize';
 import { drawPhotoCrop, renderWallpaper, type Colours } from './render';
@@ -84,12 +87,14 @@ async function render() {
       app.runMs = res.ms;
       perf.add('run', res.ms);
       drawPreview();
+      syncFrames();
       // the settings moved on while this converted: go again (a queued newer request is already
       // running in the worker, so this only catches the end of a drag)
       if (JSON.stringify(currentRequest()) !== key) schedule();
     }
   } else {
     drawPreview();
+    syncFrames();
   }
   if (thumbsDirty && !converting && key === lastKey) {
     thumbsDirty = false;
@@ -121,11 +126,15 @@ export function drawPreview() {
   if (!c || !g || !loaded || !c.width || !c.height) return;
   const ctx = c.getContext('2d');
   if (!ctx) return;
-  const layout = layoutFor(g, c.width, c.height);
   const t0 = performance.now();
   const colours = previewColours();
-  if (app.peeking) drawPhotoCrop(ctx, loaded.photo.canvas, app.crop, layout, colours.paper, c.width, c.height, colours.surround);
-  else renderWallpaper(ctx, previewGrid(g), layout, colours, previewSurface(c.width, c.height));
+  if (app.peeking) {
+    const layout = layoutFor(g, c.width, c.height);
+    drawPhotoCrop(ctx, loaded.photo.canvas, app.crop, layout, colours.paper, c.width, c.height, colours.surround);
+  } else {
+    const shown = previewGrid(g);
+    renderWallpaper(ctx, shown, layoutFor(shown, c.width, c.height), colours, previewSurface(c.width, c.height));
+  }
   perf.add('draw', performance.now() - t0);
 }
 
@@ -144,11 +153,84 @@ let epoch = performance.now();
 
 function previewGrid(g: Grid): Grid {
   const m = previewMotion();
+  if (m.columns.on) {
+    const k = app.playing && frames && frames.key === framesKey() ? frames : null;
+    if (!k || k.grids.length !== k.cols.length) return g;
+    const t = (performance.now() - epoch) / 1000;
+    return k.grids[columnFrameAt(t, k.cols.length, m.columns.period, k.start)]!;
+  }
   const f = g.field;
   if (!app.playing || !f || !dotMotion(m)) return g;
   if (packedFor !== g) { packed = packField(f); packedFor = g; }
   if (!scratch || scratch.length !== f.width * f.height) scratch = new Uint8Array(f.width * f.height);
   return frameGrid(packed!, f.width, f.height, m, (performance.now() - epoch) / 1000, scratch);
+}
+
+// Columns (Letters): the engine converts the photo at every keyframe's column count on a pool of
+// workers (Engine.frames), after the preview is drawn. The preview plays them once all are in;
+// Save waits for the same batch.
+
+interface FrameBatch {
+  key: string;
+  cols: number[];
+  start: number;
+  grids: Grid[];
+  done: Promise<Grid[] | null>;
+}
+
+let frames: FrameBatch | null = null;
+
+/** Everything the keyframes depend on. */
+function framesKey(): string {
+  const m = app.playMotion.columns;
+  const { crop, opts } = currentRequest();
+  return JSON.stringify([app.loaded?.path, crop, { ...opts, cols: 0, rows: 0, field: false }, app.cropAspect,
+    m.from, m.to, m.fps, m.period, app.cols]);
+}
+
+/** The keyframes' column counts for the current settings (and whether the cell budget cut them). */
+export const currentPlan = () =>
+  columnPlan(app.playMotion.columns, app.cols, c => rowsFor(c, app.doc.mode, app.cropAspect));
+
+/** Start building the keyframes for the current settings, if Columns is on and they are not built. */
+function syncFrames() {
+  if (!app.loaded || !app.playMotion.columns.on) {
+    if (frames) { frames = null; engine.frames.cancel(); app.framesProgress = null; }
+    return;
+  }
+  const key = framesKey();
+  if (frames?.key === key) return;
+  const { cols } = currentPlan();
+  const { crop, opts } = currentRequest();
+  const reqs = cols.map(c => ({ crop, opts: { ...opts, cols: c, rows: rowsFor(c, opts.mode, app.cropAspect), field: false } }));
+  const batch: FrameBatch = { key, cols, start: columnStart(cols, app.cols), grids: [], done: Promise.resolve(null) };
+  frames = batch;
+  app.framesProgress = { done: 0, total: cols.length };
+  let n = 0;
+  batch.done = engine.frames.run(reqs, () => {
+    if (frames === batch) app.framesProgress = { done: ++n, total: cols.length };
+  }).then(grids => {
+    if (frames !== batch || !grids) return null;
+    batch.grids = grids;
+    app.framesProgress = null;
+    schedule();
+    return grids;
+  }, e => {
+    if (frames === batch) { frames = null; app.framesProgress = null; }
+    throw e;
+  });
+  batch.done.catch(e => app.say('error', `Could not build the Columns frames: ${errorText(e)}`));
+}
+
+/** The Columns keyframes for the current settings (built now if they are not). */
+export async function columnFrames(): Promise<{ cols: number[]; start: number; grids: Grid[] }> {
+  for (;;) {
+    syncFrames();
+    const b = frames;
+    if (!b) throw new Error('Columns needs the Letters style');
+    const grids = await b.done;
+    if (grids && frames === b) return { cols: b.cols, start: b.start, grids };
+  }
 }
 
 function previewColours(): Colours {
@@ -167,7 +249,22 @@ export function syncMotion(restart = false) {
   const fps = app.playing && app.loaded ? motionFps(m) : 0;
   if (restart) epoch = performance.now();
   clearInterval(motionTimer);
-  motionTimer = fps > 0 ? window.setInterval(schedule, 1000 / fps) : m.day.on && app.loaded ? window.setInterval(schedule, 30000) : 0;
+  // Columns looks every display frame and draws only when the keyframe changes, so each keyframe
+  // shows for its own time (a timer at the keyframe rate would beat against the changes)
+  motionTimer = fps > 0 && m.columns.on ? window.setInterval(columnsTick, 16)
+    : fps > 0 ? window.setInterval(schedule, 1000 / fps)
+    : m.day.on && app.loaded ? window.setInterval(schedule, 30000) : 0;
+  schedule();
+}
+
+let lastKeyframe = -1;
+
+function columnsTick() {
+  const k = frames;
+  if (!k || k.grids.length !== k.cols.length) return;
+  const i = columnFrameAt((performance.now() - epoch) / 1000, k.cols.length, previewMotion().columns.period, k.start);
+  if (i === lastKeyframe) return;
+  lastKeyframe = i;
   schedule();
 }
 
