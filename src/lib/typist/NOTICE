@@ -8,16 +8,19 @@ License:   MIT, (c) 2026 winch. See LICENSE in this directory.
 
 What is here
 ------------
-js/        tone, convert, dither, blocks, ascii, shape-vectors, raster, export, imageio, crop,
-           history, targets, count from upstream js/. Unchanged except the patches below.
-           targets.js and count.js are kept whole only because export.js (and its test) import
-           them; the app calls only targets.cellAspect / rowsFor.
-tests/     ascii, convert, export and fuzz .test.mjs, unchanged, plus aspect.test.mjs (Stipple's
+js/        tone, convert, dither, blocks, ascii, shape-vectors, raster, imageio, crop, history
+           from upstream js/. Unchanged except the patches below. The app uses only the Photo
+           look, Atkinson dithering and the Dots / Letters modes; the other looks, dithers and
+           blocks.js stay because the converter and its tests are built around them.
+tests/     ascii, convert and fuzz .test.mjs, unchanged, plus aspect.test.mjs (Stipple's
            own, for the crop aspect below). Run them with `bun run test:engine` (node --test; bun
            test does not report these plain assert scripts correctly).
 
 Local changes (each marked "Stipple patch" in the source)
 -------------------------------------------------------------
+js/raster.js   Trimmed to BRAILLE_SLOTS and brailleGeometry(): src/lib/rasterize.ts draws the
+               grid with the same geometry (canvas drawing calls are too slow in WebKitGTK), so
+               drawGrid, BLOCK_MASK and gridFromText went.
 js/ui.js       Trimmed to paintRange() and announce(), copied verbatim from upstream ui.js
                (lines 6-10 and 222-228), because crop.js imports them. The rest of ui.js is DOM
                widgets this app implements in Svelte.
@@ -53,12 +56,12 @@ js/ascii.js    resampleL builds its per-axis taps once as flat typed arrays (bit
                1 cell in 10 can pick a different glyph than upstream. Letters at 150 columns went
                from ~110 to ~65 ms.
 
-Not used: raster.js drawGrid (the app rasterises in src/lib/rasterize.ts with the same geometry;
-canvas drawing calls are too slow in WebKitGTK) and export.js's exporters.
-
 To take an upstream fix:
   diff -r <typist clone>/js src/lib/typist/js      # the patches above plus the dropped files
   port the change, keep the patches, re-run `bun run test:engine`, update the commit above.
 
-Dropped (social targets, clipboard, video, UI): app.js, copy.js, links.js, share.js, preview.js,
-samples.js, store.js, encoder.js, vendor/, the rest of ui.js and every other test.
+Dropped (social targets, clipboard, video, UI, export): app.js, copy.js, links.js, share.js,
+preview.js, samples.js, store.js, encoder.js, export.js, targets.js, count.js, vendor/, the rest
+of ui.js and every other test. The app keeps its own copies of the three things it took from
+them: targets.js's File-target cell aspects and rowsFor (src/lib/engine/engine.ts) and
+export.js's MONO_STACK (src/lib/render.ts FONT).

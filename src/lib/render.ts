@@ -1,23 +1,23 @@
-// Draws a wallpaper: paper over the whole canvas, then the grid at its layout (clipped in fill).
+// Draws a wallpaper: paper over the whole canvas, then the grid at its layout (clipped to its area).
 // The export draws at the output size; the preview draws the same thing at its own pixel size.
 // Everything is laid out in device pixels. The grid itself is rasterised in JS (rasterize.ts):
 // canvas drawing calls are too slow in WebKitGTK for tens of thousands of dots or glyphs.
 
 import type { Grid } from '$typist/convert.js';
-import { MONO_STACK } from '$typist/export.js';
 import { cropSize, type Crop } from '$typist/tone.js';
 import type { Layout } from './layout';
 import { rasterize, Surface } from './rasterize';
 
-/** Typist's PNG export font stack (the bundled Geist Mono first). */
-export const FONT = MONO_STACK;
+/** Typist's PNG export font stack (export.js MONO_STACK: the bundled Geist Mono first). */
+export const FONT = '"Geist Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, '
+  + '"DejaVu Sans Mono", "Liberation Mono", monospace';
 /** Braille dot radius relative to the column pitch, as Typist exports it. */
 export const DOT_R = 0.32;
 
 export interface Colours {
   ink: string;
   paper: string;
-  /** Outside the art's rectangle (the margin or around the box); missing = paper. */
+  /** Outside the art's rectangle (around the box); missing = paper. */
   surround?: string;
 }
 
@@ -43,11 +43,9 @@ export function drawPhotoCrop(ctx: Ctx, photo: HTMLCanvasElement, crop: Crop, la
   ctx.fillRect(0, 0, width, height);
   ctx.fillStyle = paper;
   ctx.fillRect(layout.inner.x, layout.inner.y, layout.inner.w, layout.inner.h);
-  if (layout.clip) {
-    ctx.beginPath();
-    ctx.rect(layout.clip.x, layout.clip.y, layout.clip.w, layout.clip.h);
-    ctx.clip();
-  }
+  ctx.beginPath();
+  ctx.rect(layout.clip.x, layout.clip.y, layout.clip.w, layout.clip.h);
+  ctx.clip();
   ctx.beginPath();
   ctx.rect(layout.x, layout.y, layout.artW, layout.artH);
   ctx.clip();

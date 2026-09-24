@@ -107,32 +107,6 @@ declare module '$typist/convert.js' {
   export function gridLines(grid: Pick<Grid, 'cols' | 'rows' | 'cp'>): string[];
 }
 
-declare module '$typist/raster.js' {
-  import type { Grid } from '$typist/convert.js';
-
-  export interface DrawOpts {
-    x?: number;
-    y?: number;
-    cellW?: number;
-    cellH?: number;
-    ink?: string;
-    paper?: string | null;
-    font?: string;
-    dotR?: number;
-    ghost?: number;
-  }
-  export function drawGrid(
-    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
-    grid: Grid,
-    opts?: DrawOpts,
-  ): { width: number; height: number };
-  export function brailleGeometry(cellW: number, cellH: number, dotR?: number): {
-    r: number;
-    centers: [number, number][];
-  };
-  /** Block glyph -> quadrant mask (UL=1, UR=2, LL=4, LR=8). */
-  export const BLOCK_MASK: Map<number, number>;
-}
 
 declare module '$typist/imageio.js' {
   import type { Crop } from '$typist/tone.js';
@@ -215,13 +189,6 @@ declare module '$typist/history.js' {
   }
 }
 
-declare module '$typist/targets.js' {
-  import type { Mode } from '$typist/convert.js';
-  /** Cell width / height as the target renders it ('plain' = Typist's File target). */
-  export function cellAspect(id: 'plain', mode: Mode): number;
-  /** Rows that keep a square crop square for a cell aspect. */
-  export function rowsFor(cols: number, aspect: number): number;
-}
 
 declare module '$typist/dither.js' {
   import type { Dither } from '$typist/convert.js';
@@ -237,8 +204,10 @@ declare module '$typist/dither.js' {
   };
 }
 
-declare module '$typist/export.js' {
-  export const INK: string;
-  export const PAPER: string;
-  export const MONO_STACK: string;
+
+declare module '$typist/raster.js' {
+  export function brailleGeometry(cellW: number, cellH: number, dotR?: number): {
+    r: number;
+    centers: [number, number][];
+  };
 }

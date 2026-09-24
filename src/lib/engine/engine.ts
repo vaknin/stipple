@@ -5,22 +5,21 @@
 // resolves to null.
 
 import { createConverter, gridLines, type Converter, type ConvertOpts, type Grid, type Mode } from '$typist/convert.js';
-import { cellAspect as typistCellAspect, rowsFor as typistRowsFor } from '$typist/targets.js';
 import type { Crop } from '$typist/tone.js';
 import { autoColumns, type LayoutIn } from '../layout';
 
 export type { Grid, Mode };
 export { gridLines };
 
-/** Typist's File-target cell aspect (cell width / height): braille 0.577, ascii 0.462, blocks 0.5. */
-export const cellAspect = (mode: Mode): number => typistCellAspect('plain', mode);
-
 /**
- * Rows that keep the crop's aspect (width / height): a square crop's as Typist's File target
- * computes them, else round(cols * cellAspect / aspect).
+ * Typist's File-target cell aspect (targets.js FIT.plain, cellEm / lineEm): braille 0.577,
+ * ascii 0.462 (blocks, which Stipple does not offer, 0.5).
  */
+export const cellAspect = (mode: Mode): number => (mode === 'braille' ? 0.75 / 1.3 : mode === 'ascii' ? 0.6 / 1.3 : 0.6 / 1.2);
+
+/** Rows that keep the crop's aspect (width / height): round(cols * cellAspect / aspect). */
 export const rowsFor = (cols: number, mode: Mode, aspect = 1): number =>
-  aspect === 1 ? typistRowsFor(cols, cellAspect(mode)) : Math.max(1, Math.round((cols * cellAspect(mode)) / aspect));
+  Math.max(1, Math.round((cols * cellAspect(mode)) / aspect));
 
 /** Auto columns for the output and crop aspect (see layout.autoColumns). */
 export const autoCols = (mode: Mode, o: LayoutIn, aspect = 1): number => autoColumns(cellAspect(mode), o, aspect);

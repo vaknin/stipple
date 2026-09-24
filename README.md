@@ -1,30 +1,29 @@
 # Stipple
 
-Turn a photo into a text-art wallpaper (Braille dots, letters or blocks) and set it as the
+Turn a photo into a text-art wallpaper (Braille dots or letters) and set it as the
 Omarchy background in one click. The art is made by the [Typist](https://github.com/winchxyz/typist)
 engine (vendored in `src/lib/typist`, MIT), laid out at exactly your monitor's resolution.
 
 Omarchy's background renderer always crops to fill the screen, so a square picture loses a big
 part of its height on a 16:9 screen. Stipple draws the wallpaper at exactly the output size
-instead, with the art fitted (or filled) and the rest in the paper colour, so nothing is cropped.
+instead: the photo is cropped to the screen's shape (or to a rectangle you place) and the art
+fills it exactly.
 
 ## Use
 
 1. **Open a photo** (PNG, JPEG, WebP or Canon CR3 raw): the Open button, `O`, or drag and drop it onto the window.
 2. Adjust it. The preview follows every control while you drag.
-   - **Look**: Photo, Texture, Sketch, Soft, Poster (thumbnails are made from your photo).
-   - **Style**: Dots, Letters or Blocks, with Dithering (Atkinson, Floyd–Steinberg, Ordered,
-     Threshold), Letters (Shape-aware, Density), Blocks (Quarters, Halves, Colour).
+   - **Style**: Dots (Atkinson dithering) or Letters (Shape-aware or Density).
    - **Columns**: type a number (4–4096), or **Auto**. Rows follow from the crop.
-   - **Tone**: Invert, Auto levels, Brightness, Contrast, Gamma, Detail, Edges. Double-click a
-     slider to reset it; click its value to type one.
+   - **Tone**: Invert, Auto levels, Brightness, Contrast. Double-click a slider to reset it; click
+     its value to type one.
    - **Crop** (`F`): move, zoom (wheel, `+`/`-`), rotate (`R`), Fit; Enter applies, Escape cancels.
-   - **Wallpaper**: output size (your monitors from Hyprland, or any W × H), **Art area** (the
-     whole screen, or a box you size and place; drag the art in the preview to move it, scroll
-     over it to resize), Fit or Fill, Margin, **Crop to screen aspect**, Ink, Paper and Surround
-     colours ("Invert rule" or the current Omarchy theme's colours), and eight **Riso inks**
-     presets: light risograph inks on dark paper.
-   - **Motion**: Twinkle, Shimmer, Pan and zoom, Columns (see
+   - **Wallpaper**: **Art area**: **Fill** (the whole screen) or **Custom**, a rectangle on the
+     preview: drag it to move it, drag its edges or corners to resize it, scroll over it to scale
+     it, double-click it to centre it. Ink, Paper and (Custom) Surround colours ("Invert rule" or
+     the current Omarchy theme's colours), and eight **Riso inks** presets: light risograph inks on
+     dark paper. With several monitors, which one the wallpaper is made for.
+   - **Motion**: Twinkle, Columns (see
      [Animated wallpapers](#animated-wallpapers)). The preview plays it; the pause button shows
      the still.
 3. **Save** (`S`) writes `~/Pictures/Wallpapers/<photo>-stipple-<W>x<H>.png` (never overwriting:
@@ -56,13 +55,12 @@ make a new version from it (any other change saves a new file).
 - **PNG** is what Omarchy can set today and what `omarchy theme bg next` rotates through
   (jpg, jpeg, png, gif, bmp, webp). It is lossless, so the dots stay crisp.
 - **`<name>.stipple.json`** keeps everything a later version needs to redraw the art without the
-  photo: the grid (mode, cols, rows, one code point per cell as `lines` and `cp`, per-cell `fg` /
-  `bg` for colour blocks), every Typist setting (look, style, dither, tone, crop: with Crop to
-  screen aspect on, `crop.aspect` is the width / height it was cropped at), the wallpaper options,
+  photo: the grid (mode, cols, rows, one code point per cell as `lines` and `cp`), every setting
+  (style, tone, crop: `crop.aspect` is the width / height it was cropped at), the wallpaper options,
   the layout (cell size and position), the source path and the engine commit.
   A future animated renderer can re-render, re-characterise or animate from this file alone.
 - **`.stipple/<name>/field.png`** (Dots only) is the dot field the animated wallpaper reads: one
-  pixel per dot, the saved dot, the tone and the dots edge emphasis forced on. It sits in a hidden
+  pixel per dot, the saved dot in the red channel. It sits in a hidden
   folder so `omarchy theme bg next` never shows it. The sidecar (format `stipple/2`) also holds the
   motion.
 - **`.stipple/<name>/frames.png`** and **`glyphs.png`** (Letters with Columns motion) are the
@@ -83,24 +81,18 @@ make a new version from it (any other change saves a new file).
 
 ## How the layout works
 
-- The canvas is exactly the output size (default: the focused monitor's physical resolution from
-  `hyprctl monitors -j`; eDP-1 is 1920×1080 at scale 2 here).
-- **Margin** is a share of the shorter side, kept as paper on every side.
-- **Fit**: the whole art, centred in the space inside the margin (integer-pixel offsets, centred
-  within 1 px). **Fill**: the art covers that space and is clipped to it.
-- Cells keep Typist's File-target aspect (Dots 0.75/1.3, Letters 0.6/1.3, Blocks 0.6/1.2), so the
-  art matches the Typist web app's proportions.
+- The canvas is exactly the output size: the monitor's physical resolution from
+  `hyprctl monitors -j` (eDP-1 is 1920×1080 at scale 2 here).
+- The art's area is the whole canvas (**Fill**) or the Custom rectangle. The photo is cropped to
+  that area's shape, so the art covers it exactly (centred, integer-pixel offsets, clipped to it:
+  only the rounding of the rows is cut). Around a Custom rectangle is the surround colour.
+- Cells keep Typist's File-target aspect (Dots 0.75/1.3, Letters 0.6/1.3), so the art matches the
+  Typist web app's proportions.
 - **Auto columns** are derived from the output instead of Typist's fixed 48/72/56 (too coarse for a
   1080p screen): the column count whose cells come out about **15 px tall** on the wallpaper.
-  Rows = art height / 15, columns = rows / cell aspect, clamped to 4–4096 (the saved dot field's 8192 px side). At 1920×1080 that is 125
-  columns for Dots (the hand-made reference used about 125), 156 for Letters and 144 for Blocks.
-- **Crop to screen aspect** (off by default: the crop is square, as in Typist) crops the photo to
-  the shape of the space inside the margin, so the art fills the screen instead of leaving paper at
-  the sides. The crop follows the output size and margin. Rows = columns × cell aspect / crop
-  aspect, and Auto columns use the art's height (the inner height, or its width / aspect if that is
-  smaller). On a 16:9 screen that means more columns: at 1920×1080 Dots comes out 222 wide.
-  Turning it on moves an upright crop just
-  enough to keep it on the photo.
+  Rows = art height / 15, columns = rows × crop aspect / cell aspect, clamped to 4–4096 (the saved
+  dot field's 8192 px side). At 1920×1080 that is 222 columns for Dots.
+- A change of the area's shape moves an upright crop just enough to keep it on the photo.
 - The art is always laid out at the final size, never scaled afterwards. Paper fills everything
   behind and around it, so there is no seam.
 
@@ -113,8 +105,6 @@ Brightness one step per frame:
 | --- | --- | --- | --- | --- |
 | Dots | 150×87 | 20 / 42 ms | 9 ms | ~42 / s |
 | Dots | 125×72 (1080p Auto) | 15 / 23 ms | 8 ms | ~37 / s |
-| Blocks | 150×75 | 9 / 10 ms | 13 ms | ~29 / s |
-| Colour blocks | 150×75 | 34 / 54 ms | 20 ms | ~25 / s |
 | Letters | 150×69 | 61 / 379 ms | 5 ms | ~13 / s |
 
 The window itself stays at ~57 fps in every style: conversion runs in a Web Worker
@@ -193,19 +183,15 @@ underneath is the right still picture. A saved motion change reloads live.
 | Effect | Needs | What moves |
 | --- | --- | --- |
 | Twinkle | Dots | a few dots blink, picked at random each tick |
-| Shimmer | Dots, Ordered dithering | the shading is re-dithered with fine noise |
-| Pan and zoom | Dots, Ordered dithering | the view drifts and slowly zooms inside the crop |
 | Columns | Letters | the column count sweeps From → To → From (any counts in 4–4096) |
 
 Frame 0 of every effect is the saved PNG. Motion stops behind a fullscreen window, after 60 s
 idle (screensaver, lock, screen off) and on `omarchy-shell stipple pause`; with windows open it
-slows to 2 fps (or keeps going, or stops: the Motion tab's choice), and stops once windows and
-the bar cover 90% of the screen (only the gaps show); on battery it can halve or stop.
+slows to 2 fps, and stops once windows and the bar cover 90% of the screen (only the gaps show).
 
 One fragment shader draws each frame (`shaders/wall.frag`), and only when the picture changes:
-on each Twinkle or Shimmer tick, or each Pan frame (8 fps by default, which moves the view less
-than half a dot per frame). `src/lib/motion.ts` is its JS mirror for the app's preview, and the
-tests check the two agree.
+on each Twinkle tick or Columns keyframe. `src/lib/motion.ts` is its JS mirror for the app's
+preview, and the tests check the two agree.
 
 Install or update the plugin (compiles the shader, links the folder into
 `~/.config/omarchy/plugins`, enables it):

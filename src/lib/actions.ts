@@ -8,6 +8,7 @@
 // Changing only the motion of a saved wallpaper rewrites its sidecar: the plugin picks it up live.
 
 import { gridLines, type Grid } from '$typist/convert.js';
+import { version as APP_VERSION } from '../../package.json';
 import { cellAspect } from './engine/engine';
 import { atlasLevels, glyphAtlas, packFrames } from './letterframes';
 import { baseName, columnFrames, currentGrid, layoutFor, schedule } from './pipeline';
@@ -18,7 +19,6 @@ import { app, effectiveCrop, type Snapshot } from './state.svelte';
 import { addToThemeBackgrounds, errorText, removeMotionFiles, saveField, savePng, saveSidecar, setWallpaper } from './tauri';
 
 export const ENGINE = { name: 'typist', repo: 'https://github.com/winchxyz/typist', commit: '7081dce' };
-const APP_VERSION = '0.1.0';
 export const FORMAT = 'stipple/2';
 
 /** `.stipple/<stem>/<name>.png`, relative to the wallpaper's folder. */

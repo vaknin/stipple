@@ -5,7 +5,7 @@
 // arcs, a 1080p Braille wallpaper, took 20 s to fill). Plain JS writes the same frame in a few ms.
 //
 // Geometry is Typist's, so the art looks the same: Braille dot centres and radius from raster.js
-// brailleGeometry, block edges snapped to whole pixels as drawBlocks does, letters with
+// brailleGeometry, letters with
 // raster.js's font fitting (advance = cell width, em box centred). What differs is only the
 // anti-aliasing: dots are supersampled stamps and glyphs are masks rendered once per cell size,
 // both placed at quarter-pixel positions.
@@ -14,7 +14,7 @@
 // through a 256-entry table, so ink and paper are exact wherever coverage is 0 or 255.
 
 import type { Grid } from '$typist/convert.js';
-import { BLOCK_MASK, brailleGeometry } from '$typist/raster.js';
+import { brailleGeometry } from '$typist/raster.js';
 import type { Layout } from './layout';
 import type { Colours } from './render';
 
@@ -59,8 +59,6 @@ function rgb(hex: string): [number, number, number] {
 }
 
 const word = (r: number, g: number, b: number) => (0xff000000 | (b << 16) | (g << 8) | r) >>> 0;
-/** 0xRRGGBB (Grid fg / bg) as a pixel word. */
-const word24 = (v: number) => word((v >> 16) & 255, (v >> 8) & 255, v & 255);
 
 function inkTable(ink: string, paper: string): Uint32Array {
   const [ir, ig, ib] = rgb(ink), [pr, pg, pb] = rgb(paper);
@@ -279,7 +277,7 @@ export interface RasterOpts {
 }
 
 /**
- * Paper over the whole surface, then the grid at `layout` (clipped to layout.clip in fill mode).
+ * Paper over the whole surface, then the grid at `layout` (clipped to layout.clip).
  * Returns the surface's ImageData, ready for putImageData.
  */
 export function rasterize(s: Surface, grid: Grid, layout: Layout, colours: Colours, o: RasterOpts): ImageData {
@@ -288,7 +286,7 @@ export function rasterize(s: Surface, grid: Grid, layout: Layout, colours: Colou
   const surround = colours.surround ? word(...rgb(colours.surround)) : paper;
   s.px.fill(surround);
   if (surround !== paper) {
-    // paper only inside the art's rectangle (the margin or the box stays surround)
+    // paper only inside the art's rectangle (around the box stays surround)
     const r = layout.inner;
     const ix0 = Math.max(0, Math.floor(r.x)), ix1 = Math.min(W, Math.ceil(r.x + r.w));
     for (let yy = Math.max(0, Math.floor(r.y)), y1 = Math.min(H, Math.ceil(r.y + r.h)); yy < y1; yy++) {
@@ -297,19 +295,14 @@ export function rasterize(s: Surface, grid: Grid, layout: Layout, colours: Colou
   }
   const c = layout.clip;
   const rg: Region = {
-    x0: Math.max(0, c ? Math.floor(c.x) : 0),
-    y0: Math.max(0, c ? Math.floor(c.y) : 0),
-    x1: Math.min(W, c ? Math.ceil(c.x + c.w) : W),
-    y1: Math.min(H, c ? Math.ceil(c.y + c.h) : H),
+    x0: Math.max(0, Math.floor(c.x)),
+    y0: Math.max(0, Math.floor(c.y)),
+    x1: Math.min(W, Math.ceil(c.x + c.w)),
+    y1: Math.min(H, Math.ceil(c.y + c.h)),
   };
   if (rg.x1 <= rg.x0 || rg.y1 <= rg.y0) return s.image;
   const { cols, rows, cp } = grid;
   const { x, y, cellW, cellH } = layout;
-
-  if (grid.mode === 'blocks' && grid.fg && grid.bg) {
-    drawColourBlocks(s, grid, layout, rg);
-    return s.image;
-  }
 
   // the art's own box (plus overhang) inside the region: the only pixels that can get ink
   let pad = 2;
@@ -333,22 +326,6 @@ export function rasterize(s: Surface, grid: Grid, layout: Layout, colours: Colou
       }
     }
     pad = Math.ceil(r) + 2;
-  } else if (grid.mode === 'blocks') {
-    // raster.js drawBlocks: edges on whole pixels, shared by neighbours (no seams)
-    const X = (i: number) => Math.round(x + (i * cellW) / 2), Y = (j: number) => Math.round(y + (j * cellH) / 2);
-    const cov = s.cov;
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        const mask = BLOCK_MASK.get(cp[row * cols + col]!) ?? 0;
-        for (let k = 0; k < 4; k++) {
-          if (!((mask >> k) & 1)) continue;
-          const qx = 2 * col + (k & 1), qy = 2 * row + (k >> 1);
-          const x0 = Math.max(X(qx), rg.x0), x1 = Math.min(X(qx + 1), rg.x1);
-          const y0 = Math.max(Y(qy), rg.y0), y1 = Math.min(Y(qy + 1), rg.y1);
-          for (let yy = y0; yy < y1; yy++) cov.fill(255, yy * W + x0, yy * W + Math.max(x0, x1));
-        }
-      }
-    }
   } else {
     const set = glyphSet(o.font, cellW, cellH);
     prepareGlyphs(set, cp, cellW);
@@ -378,33 +355,4 @@ export function rasterize(s: Surface, grid: Grid, layout: Layout, colours: Colou
     }
   }
   return s.image;
-}
-
-/** Colour blocks: each cell's background, then its quadrants in the foreground colour. */
-function drawColourBlocks(s: Surface, grid: Grid, layout: Layout, rg: Region) {
-  const { cols, rows, cp } = grid;
-  const fg = grid.fg!, bg = grid.bg!;
-  const { x, y, cellW, cellH } = layout;
-  const W = s.width, px = s.px;
-  const X = (i: number) => Math.round(x + (i * cellW) / 2), Y = (j: number) => Math.round(y + (j * cellH) / 2);
-  const rect = (a: number, b: number, c: number, d: number, colour: number) => {
-    const x0 = Math.max(a, rg.x0), x1 = Math.min(b, rg.x1), y0 = Math.max(c, rg.y0), y1 = Math.min(d, rg.y1);
-    if (x1 <= x0) return;
-    for (let yy = y0; yy < y1; yy++) px.fill(colour, yy * W + x0, yy * W + x1);
-  };
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      const i = row * cols + col;
-      rect(X(2 * col), X(2 * col + 2), Y(2 * row), Y(2 * row + 2), word24(bg[i]!));
-      const mask = BLOCK_MASK.get(cp[i]!) ?? 0;
-      if (!mask) continue;
-      const f = word24(fg[i]!);
-      if (mask === 15) { rect(X(2 * col), X(2 * col + 2), Y(2 * row), Y(2 * row + 2), f); continue; }
-      for (let k = 0; k < 4; k++) {
-        if (!((mask >> k) & 1)) continue;
-        const qx = 2 * col + (k & 1), qy = 2 * row + (k >> 1);
-        rect(X(qx), X(qx + 1), Y(qy), Y(qy + 1), f);
-      }
-    }
-  }
 }
