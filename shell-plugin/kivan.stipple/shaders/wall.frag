@@ -11,6 +11,9 @@
 //           Twinkle flips one dot in a few cells per tick; Shimmer and Pan and zoom re-dither G
 //           with Typist's 4x4 Bayer matrix (dither.js), so time 0 is the PNG exactly.
 //
+// Outside the art's rectangle (the margin, or around an art box) is the surround colour, which is
+// never recoloured unless it is the paper's.
+//
 // The geometry is src/lib/rasterize.ts's: dot centres on a regular lattice snapped to quarter
 // pixels, radius min(dotR * pitchX, 0.46 * pitch). src/lib/motion.ts mirrors every formula here
 // for the app's preview; keep the two in step.
@@ -34,6 +37,8 @@ layout(std140, binding = 0) uniform buf {
     vec4 field;      // field width, height, dot radius, 0
     vec4 effects;    // twinkle amount, shimmer amount, pan zoom, pan period (s)
     vec4 clock;      // time (s), twinkle tick, shimmer tick, 0
+    vec4 inner;      // the art's rectangle x0, y0, x1, y1 in wallpaper px (surround outside)
+    vec4 surround;   // colour outside it
 };
 
 layout(binding = 1) uniform sampler2D fieldTex;
@@ -101,7 +106,9 @@ bool dotOn(ivec2 s) {
 void main() {
     vec2 wp = qt_TexCoord0 * map.xy + map.zw;
     vec3 col;
-    if (canvas.z < 0.5) {
+    if (wp.x < inner.x || wp.y < inner.y || wp.x >= inner.z || wp.y >= inner.w) {
+        col = surround.rgb;
+    } else if (canvas.z < 0.5) {
         vec3 c = texture(artTex, wp / canvas.xy).rgb;
         vec3 d = srcInk.rgb - srcPaper.rgb;
         float k = clamp(dot(c - srcPaper.rgb, d) / max(dot(d, d), 1e-6), 0.0, 1.0);

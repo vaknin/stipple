@@ -86,6 +86,12 @@ Item {
   }
   readonly property color ink: root.spec && root.motion ? root.mixHex(root.spec.colours.ink, root.motion.day.nightInk, root.night) : "black"
   readonly property color paper: root.spec && root.motion ? root.mixHex(root.spec.colours.paper, root.motion.day.nightPaper, root.night) : "white"
+  // a surround of its own stays put; one that is the paper follows the paper (motion.ts coloursAt)
+  readonly property color surround: {
+    const c = root.spec ? root.spec.colours : null
+    const own = !!c && !!c.surround && String(c.surround).toLowerCase() !== String(c.paper).toLowerCase()
+    return own ? c.surround : root.paper
+  }
 
   Timer {
     interval: 30000
@@ -222,6 +228,7 @@ Item {
       return JSON.stringify({
         current: root.current,
         animated: !!root.spec,
+        version: root.version,
         paused: root.paused,
         idle: root.idle,
         onBattery: UPower.onBattery,
@@ -340,6 +347,11 @@ Item {
           return Qt.vector4d(m.twinkle.on ? m.twinkle.amount : 0, m.shimmer.on ? m.shimmer.amount : 0,
             m.pan.on ? m.pan.zoom : 0, m.pan.period)
         }
+        property vector4d inner: {
+          const r = sp && sp.layout.inner
+          return r ? Qt.vector4d(r.x, r.y, r.x + r.w, r.y + r.h) : Qt.vector4d(0, 0, cw, ch)
+        }
+        property color surround: root.surround
         property vector4d clock: {
           const m = sp ? sp.motion : null
           const t = win.now
