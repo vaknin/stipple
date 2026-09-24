@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use serde::Serialize;
 use tauri::ipc::{InvokeBody, Request, Response};
 
 use crate::{files, monitors, omarchy};
@@ -37,11 +38,47 @@ pub async fn save_png(request: Request<'_>) -> Result<String, String> {
     Ok(path.display().to_string())
 }
 
-/// `<png stem>.stipple.json` next to a saved wallpaper: the grid and every setting.
+/// `<png stem>.stipple.json` next to a saved wallpaper (in the output folder or the theme
+/// backgrounds): the grid and every setting. Replaces an existing one (a motion change).
 #[tauri::command]
 pub async fn save_sidecar(png_path: String, json: String) -> Result<String, String> {
-    let path = files::save_sidecar(&files::wallpapers_dir()?, &PathBuf::from(png_path), &json)?;
+    let png = files::wallpaper_png(&files::wallpaper_roots()?, &PathBuf::from(png_path))?;
+    let path = files::save_sidecar(&png, &json)?;
     Ok(path.display().to_string())
+}
+
+/// The dot field of a saved Dots wallpaper, for the animated wallpaper: raw RGB body (3 bytes per
+/// dot), headers `x-png-path` (percent-encoded path of the wallpaper) and `x-size` (`<W>x<H>`).
+/// Written as `<dir>/.stipple/<stem>/field.png`.
+#[tauri::command]
+pub async fn save_field(request: Request<'_>) -> Result<String, String> {
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected the dot field as a raw body".into());
+    };
+    let header = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let png = PathBuf::from(files::percent_decode(header("x-png-path")));
+    let png = files::wallpaper_png(&files::wallpaper_roots()?, &png)?;
+    let size = header("x-size")
+        .split_once('x')
+        .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)))
+        .ok_or("x-size must be <width>x<height>")?;
+    let path = files::save_field(&png, size, bytes)?;
+    Ok(path.display().to_string())
+}
+
+#[derive(Serialize)]
+pub struct Sidecar {
+    json: String,
+    /// The PNG is in the output folder or the theme backgrounds, so Save may update it in place.
+    editable: bool,
+}
+
+/// The sidecar of a PNG the user opened, if it has one (reopening a Stipple wallpaper).
+#[tauri::command]
+pub async fn read_sidecar(path: String) -> Result<Option<Sidecar>, String> {
+    let png = PathBuf::from(path);
+    let editable = files::wallpaper_png(&files::wallpaper_roots()?, &png).is_ok();
+    Ok(files::read_sidecar(&png)?.map(|json| Sidecar { json, editable }))
 }
 
 /// `omarchy theme bg set <path>`, then checks the symlink and `omarchy theme bg current`.
@@ -51,12 +88,13 @@ pub async fn set_wallpaper(path: String) -> Result<omarchy::SetResult, String> {
     omarchy::set_background(&file)
 }
 
-/// Copy a saved wallpaper into `~/.config/omarchy/backgrounds/<theme>/` so it joins the rotation.
+/// Copy a saved wallpaper into `~/.config/omarchy/backgrounds/<theme>/` so it joins the rotation,
+/// with its sidecar and dot field (the animated wallpaper plays there too).
 #[tauri::command]
 pub async fn add_to_theme_backgrounds(path: String) -> Result<String, String> {
     let file = files::inside(&files::wallpapers_dir()?, &PathBuf::from(path))?;
     let dest = files::theme_backgrounds_dir()?.join(omarchy::theme_slug()?);
-    Ok(files::copy_unique(&file, &dest)?.display().to_string())
+    Ok(files::copy_wallpaper(&file, &dest)?.display().to_string())
 }
 
 /// mode, background, foreground and accent of the current Omarchy theme.

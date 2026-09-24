@@ -3,15 +3,16 @@
 // size with manual columns) only redraws. The full-size render happens on Save / Set only.
 
 import type { ConvertOpts, Grid } from '$typist/convert.js';
-import { autoCrop, decodeImage, ImageError, imageErrorMessage } from '$typist/imageio.js';
+import { autoCrop, decodeImage, ImageError, imageErrorMessage, type Photo } from '$typist/imageio.js';
 import { LOOKS, type LookId } from '$typist/tone.js';
 import { cellAspect, Engine, rowsFor, THUMB_COLS, type ConvertRequest } from './engine/engine';
 import { layoutArt, type Layout } from './layout';
+import { cleanMotion, coloursAt, dotMotion, frameGrid, motionFps, packField, type Motion } from './motion';
 import { perf } from './perf.svelte';
 import { surfaceCache } from './rasterize';
-import { drawPhotoCrop, renderWallpaper } from './render';
-import { app, squareCrop, type Wall } from './state.svelte';
-import { errorText, readFile } from './tauri';
+import { drawPhotoCrop, renderWallpaper, type Colours } from './render';
+import { app, docFrom, squareCrop, wallFrom, type Wall } from './state.svelte';
+import { errorText, readFile, readSidecar } from './tauri';
 
 export const engine = new Engine();
 const previewSurface = surfaceCache();
@@ -60,6 +61,8 @@ export function currentRequest(): ConvertRequest {
   const opts: ConvertOpts = {
     mode: d.mode, cols: app.cols, rows: app.rows, dither: d.dither, ascii: d.ascii, blocks: d.blocks,
     color: app.colourBlocks, tone: { ...d.tone, look: d.look },
+    // Dots carry their dot field: the animated preview and the saved field.png come from it
+    field: d.mode === 'braille',
   };
   return { crop: { ...app.crop }, opts };
 }
@@ -120,9 +123,52 @@ export function drawPreview() {
   if (!ctx) return;
   const layout = layoutFor(g, c.width, c.height);
   const t0 = performance.now();
-  if (app.peeking) drawPhotoCrop(ctx, loaded.photo.canvas, app.crop, layout, app.colours.paper, c.width, c.height, app.colours.surround);
-  else renderWallpaper(ctx, g, layout, app.colours, previewSurface(c.width, c.height));
+  const colours = previewColours();
+  if (app.peeking) drawPhotoCrop(ctx, loaded.photo.canvas, app.crop, layout, colours.paper, c.width, c.height, colours.surround);
+  else renderWallpaper(ctx, previewGrid(g), layout, colours, previewSurface(c.width, c.height));
   perf.add('draw', performance.now() - t0);
+}
+
+// -------------------------------------------------------------------------------------- motion
+// The preview plays the wallpaper's motion with motion.ts, the shader's JS mirror: each frame's
+// dots are encoded to a Braille grid and drawn by the same rasteriser as the still.
+
+/** The motion as it will be saved: effects this style cannot play are off. */
+export const previewMotion = (): Motion => app.playMotion;
+
+let packedFor: Grid | null = null;
+let packed: Uint8Array | null = null;
+let scratch: Uint8Array | null = null;
+let motionTimer = 0;
+let epoch = performance.now();
+
+function previewGrid(g: Grid): Grid {
+  const m = previewMotion();
+  const f = g.field;
+  if (!app.playing || !f || !dotMotion(m)) return g;
+  if (packedFor !== g) { packed = packField(f); packedFor = g; }
+  if (!scratch || scratch.length !== f.width * f.height) scratch = new Uint8Array(f.width * f.height);
+  return frameGrid(packed!, f.width, f.height, m, (performance.now() - epoch) / 1000, scratch);
+}
+
+function previewColours(): Colours {
+  const m = previewMotion();
+  if (!m.day.on) return app.colours;
+  const now = new Date();
+  return coloursAt(m, app.colours, app.previewMinute ?? now.getHours() * 60 + now.getMinutes());
+}
+
+/**
+ * Start, retime or stop the preview's motion frames (after any motion or play change). With only
+ * Colour over the day on, a redraw every 30 s follows the clock.
+ */
+export function syncMotion(restart = false) {
+  const m = previewMotion();
+  const fps = app.playing && app.loaded ? motionFps(m) : 0;
+  if (restart) epoch = performance.now();
+  clearInterval(motionTimer);
+  motionTimer = fps > 0 ? window.setInterval(schedule, 1000 / fps) : m.day.on && app.loaded ? window.setInterval(schedule, 30000) : 0;
+  schedule();
 }
 
 // ---------------------------------------------------------------------------------- thumbnails
@@ -152,7 +198,7 @@ export const thumbs = {
     if (!app.loaded) return;
     const base = currentRequest();
     const cols = Math.min(base.opts.cols, THUMB_COLS);
-    const opts = { ...base.opts, cols, rows: rowsFor(cols, base.opts.mode, app.cropAspect), color: false };
+    const opts = { ...base.opts, cols, rows: rowsFor(cols, base.opts.mode, app.cropAspect), color: false, field: false };
     const colours = app.colours;
     const key = JSON.stringify([app.loaded.path, base.crop, opts, colours]);
     if (key === this.key) return;
@@ -196,8 +242,29 @@ export const baseName = (p: string) => p.split('/').pop() ?? p;
 
 let loadSeq = 0;
 
-/** Open a photo by path (file dialog or drop): decode, frame it (autoCrop), convert. */
-export async function openPath(path: string) {
+async function decodePath(path: string) {
+  const name = baseName(path);
+  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  const bytes = await readFile(path);
+  return decodeImage(new Blob([bytes], { type: MIME[ext] }), name);
+}
+
+/** Make `photo` the engine's source and the app's loaded photo (settings are set by the caller). */
+async function adopt(photo: Photo, path: string, name: string) {
+  if (app.cropping) app.cropping = false;
+  await engine.setSource(photo.canvas);
+  thumbs.cancel();
+  lastKey = '';
+  app.grid = null;
+  app.loaded = { photo, path, name };
+}
+
+/**
+ * Open a photo by path (file dialog or drop): decode, frame it (autoCrop), convert. A Stipple
+ * wallpaper (a PNG with a sidecar) reopens instead: its photo with every setting and the motion,
+ * and Save then updates that file when only the motion changed. `asPhoto` skips the sidecar.
+ */
+export async function openPath(path: string, { asPhoto = false } = {}) {
   const name = baseName(path);
   const ext = name.split('.').pop()?.toLowerCase() ?? '';
   if (!MIME[ext]) {
@@ -208,16 +275,17 @@ export async function openPath(path: string) {
   app.loading = true;
   try {
     await fontsReady;
-    const bytes = await readFile(path);
-    const photo = await decodeImage(new Blob([bytes], { type: MIME[ext] }), name);
+    const side = ext === 'png' && !asPhoto ? await readSidecar(path).catch(() => null) : null;
+    const spec = side ? parseSidecar(side.json) : null;
+    if (side && spec) {
+      await reopen(path, spec, side.editable, seq);
+      return;
+    }
+    const photo = await decodePath(path);
     if (seq !== loadSeq) return;
-    if (app.cropping) app.cropping = false;
-    await engine.setSource(photo.canvas);
-    thumbs.cancel();
-    lastKey = '';
-    app.grid = null;
-    app.loaded = { photo, path, name: photo.name };
+    await adopt(photo, path, photo.name);
     app.doc.crop = squareCrop(autoCrop(photo, app.cropAspect));
+    app.saved = null;
     app.resetHistory();
     app.notice = photo.small ? { kind: 'info', text: 'This photo is small, so fine details may get lost.' } : null;
     app.commits++;
@@ -227,4 +295,54 @@ export async function openPath(path: string) {
   } finally {
     if (seq === loadSeq) app.loading = false;
   }
+}
+
+interface SidecarSpec {
+  source: { path: string; name: string };
+  doc: unknown;
+  wallpaper: unknown;
+  motion: unknown;
+}
+
+function parseSidecar(json: string): SidecarSpec | null {
+  try {
+    const s = JSON.parse(json) as Record<string, unknown>;
+    const src = s.source as Record<string, unknown> | undefined;
+    if (!/^stipple\//.test(String(s.format)) || typeof src?.path !== 'string') return null;
+    return {
+      source: { path: src.path, name: typeof src.name === 'string' ? src.name : baseName(src.path).replace(/\.[^.]+$/, '') },
+      doc: s.doc,
+      wallpaper: s.wallpaper,
+      motion: s.motionSettings ?? s.motion,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Reopen a saved wallpaper: its source photo with the saved settings. */
+async function reopen(pngPath: string, spec: SidecarSpec, editable: boolean, seq: number) {
+  const file = baseName(pngPath);
+  let photo: Photo;
+  try {
+    photo = await decodePath(spec.source.path);
+  } catch (e) {
+    if (seq !== loadSeq) return;
+    const why = e instanceof ImageError ? imageErrorMessage(e) : errorText(e);
+    app.say('error', `${file} was made from ${spec.source.path}, which could not be opened (${why}).`,
+      { label: 'Open it as a photo', run: () => openPath(pngPath, { asPhoto: true }) });
+    return;
+  }
+  if (seq !== loadSeq) return;
+  await adopt(photo, spec.source.path, spec.source.name);
+  app.doc = docFrom(spec.doc);
+  app.wall = wallFrom(spec.wallpaper);
+  app.motion = cleanMotion(spec.motion);
+  app.resetHistory();
+  app.saved = editable ? { path: pngPath, key: app.imageKey(), motion: JSON.stringify(app.playMotion) } : null;
+  app.say('info', editable
+    ? `Reopened ${file}. A motion change updates it when you save; other changes save a new file.`
+    : `Reopened ${file}. Saving makes a new file in ~/Pictures/Wallpapers.`);
+  app.commits++;
+  schedule();
 }

@@ -5,6 +5,8 @@ const COMMANDS: &[&str] = &[
     "read_file",
     "save_png",
     "save_sidecar",
+    "save_field",
+    "read_sidecar",
     "set_wallpaper",
     "add_to_theme_backgrounds",
     "theme_colors",
@@ -12,8 +14,7 @@ const COMMANDS: &[&str] = &[
 
 fn main() {
     tauri_build::try_build(
-        tauri_build::Attributes::new()
-            .app_manifest(tauri_build::AppManifest::new().commands(COMMANDS)),
+        tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(COMMANDS)),
     )
     .expect("failed to run tauri-build");
 }

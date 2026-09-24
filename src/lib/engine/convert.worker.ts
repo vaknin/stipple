@@ -31,8 +31,13 @@ self.onmessage = (e: MessageEvent<In>) => {
     const g: Grid = conv.run(m.crop, m.opts);
     const ms = performance.now() - t0;
     // copies: the converter's tone cache may hold on to nothing of these, but be safe to transfer
-    const grid: Grid = { ...g, cp: g.cp.slice(), fg: g.fg ? g.fg.slice() : null, bg: g.bg ? g.bg.slice() : null };
+    const f = g.field;
+    const grid: Grid = {
+      ...g, cp: g.cp.slice(), fg: g.fg ? g.fg.slice() : null, bg: g.bg ? g.bg.slice() : null,
+      field: f ? { width: f.width, height: f.height, L: f.L, dots: f.dots, forced: f.forced } : null,
+    };
     const transfer: Transferable[] = [grid.cp.buffer];
+    if (f) transfer.push(f.L.buffer, f.dots.buffer, f.forced.buffer);
     if (grid.fg) transfer.push(grid.fg.buffer);
     if (grid.bg) transfer.push(grid.bg.buffer);
     post({ type: 'result', id: m.id, grid, ms }, transfer);

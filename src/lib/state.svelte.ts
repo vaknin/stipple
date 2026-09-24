@@ -5,11 +5,13 @@
 // both the doc and the wallpaper options, so a margin or colour change undoes too.
 
 import type { AsciiMethod, BlocksKind, Dither, Grid, Mode } from '$typist/convert.js';
+import { cleanCrop } from '$typist/crop.js';
 import { History } from '$typist/history.js';
 import type { Photo } from '$typist/imageio.js';
 import { CROP_DEFAULTS, cropSize, TONE_DEFAULTS, type Crop, type LookId, type Tone } from '$typist/tone.js';
 import { autoCols, cellAspect, fileColours, rowsFor } from './engine/engine';
-import { COLS_MAX, COLS_MIN, innerRect, type Box, type LayoutIn, type Placement } from './layout';
+import { clampBox, COLS_MAX, COLS_MIN, innerRect, MARGIN_MAX, type Box, type LayoutIn, type Placement } from './layout';
+import { defaultMotion, motionFor, supportFor, type Motion, type Support } from './motion';
 import type { Colours } from './render';
 import type { Monitor, ThemeColors } from './tauri';
 
@@ -45,7 +47,7 @@ export interface Wall {
   surround: string | null;
 }
 
-export interface Snapshot { doc: Doc; wall: Wall }
+export interface Snapshot { doc: Doc; wall: Wall; motion: Motion }
 
 export interface LoadedPhoto {
   photo: Photo;
@@ -76,6 +78,52 @@ export const defaultWall = (): Wall => ({
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 
+type Raw = Record<string, unknown>;
+const obj = (v: unknown): Raw => (v && typeof v === 'object' ? (v as Raw) : {});
+const oneOf = <T extends string>(v: unknown, ok: readonly T[], def: T): T => (ok.includes(v as T) ? (v as T) : def);
+const num = (v: unknown, def: number) => (typeof v === 'number' && Number.isFinite(v) ? v : def);
+const hex = (v: unknown): string | null => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : null);
+
+/** A document from a sidecar's `doc` (older or partial ones get the defaults). */
+export function docFrom(raw: unknown): Doc {
+  const r = obj(raw), t = obj(r.tone), d = defaultDoc();
+  const tone = { ...d.tone };
+  for (const k of Object.keys(tone) as (keyof ToneControls)[]) {
+    const v = t[k];
+    if (typeof v === typeof tone[k] && (typeof v !== 'number' || Number.isFinite(v))) (tone as Raw)[k] = v;
+  }
+  const cols = typeof r.cols === 'number' && Number.isFinite(r.cols) ? clamp(Math.round(r.cols), COLS_MIN, COLS_MAX) : null;
+  return {
+    mode: oneOf(r.mode, ['braille', 'ascii', 'blocks'] as const, d.mode),
+    look: oneOf(r.look, ['photo', 'texture', 'sketch', 'soft', 'poster'] as const, d.look),
+    dither: oneOf(r.dither, ['atkinson', 'floyd', 'bayer', 'threshold'] as const, d.dither),
+    ascii: oneOf(r.ascii, ['shape', 'ramp'] as const, d.ascii),
+    blocks: oneOf(r.blocks, ['quad', 'half'] as const, d.blocks),
+    color: r.color === true,
+    cols,
+    tone,
+    crop: squareCrop(cleanCrop(obj(r.crop) as Partial<Crop>)),
+  };
+}
+
+/** Wallpaper options from a sidecar's `wallpaper`. */
+export function wallFrom(raw: unknown): Wall {
+  const r = obj(raw), d = defaultWall();
+  const b = r.box ? obj(r.box) : null;
+  const size = (v: unknown, def: number) => clamp(Math.round(num(v, def)), 16, 16384);
+  return {
+    width: size(r.width, d.width),
+    height: size(r.height, d.height),
+    placement: oneOf(r.placement, ['fit', 'fill'] as const, d.placement),
+    marginPct: clamp(num(r.marginPct, d.marginPct), 0, MARGIN_MAX),
+    cropToScreen: r.cropToScreen === true,
+    ink: hex(r.ink),
+    paper: hex(r.paper),
+    box: b ? clampBox({ x: num(b.x, NaN), y: num(b.y, NaN), w: num(b.w, NaN), h: num(b.h, NaN) }) : null,
+    surround: hex(r.surround),
+  };
+}
+
 /**
  * The crop's aspect (width / height): the inner rectangle's with Crop to screen on, else 1. Rounded
  * so a size or margin change that keeps the shape keeps the converter's cached samples.
@@ -102,6 +150,11 @@ export function squareCrop(c: Crop): Crop {
 class AppState {
   doc: Doc = $state(defaultDoc());
   wall: Wall = $state(defaultWall());
+  motion: Motion = $state(defaultMotion());
+  /** The preview plays the motion. */
+  playing = $state(true);
+  /** Minute of the day the preview shows Colour over the day at (null = now). */
+  previewMinute: number | null = $state(null);
   loaded: LoadedPhoto | null = $state.raw(null);
   grid: Grid | null = $state.raw(null);
   /** Last main conversion time (ms). */
@@ -130,6 +183,9 @@ class AppState {
     },
   });
 
+  /** Which effects the current style can play. */
+  support: Support = $derived(supportFor(this.doc));
+
   /** Colour blocks are on (the Colour switch only applies to Blocks). */
   colourBlocks = $derived(this.doc.mode === 'blocks' && this.doc.color);
   layoutIn: LayoutIn = $derived({
@@ -152,8 +208,23 @@ class AppState {
     return { ink: this.wall.ink ?? rule.ink, paper, surround: this.wall.surround ?? paper };
   });
 
+  /** The motion as it plays and is saved: effects this style cannot play are off. */
+  playMotion: Motion = $derived(motionFor(this.motion, this.support, this.colours));
+
+  /**
+   * The wallpaper file these settings were last saved to (or reopened from): `key` is everything
+   * that changes the image (see imageKey), `motion` the motion saved with it. Only the motion
+   * changed: Save rewrites that file's sidecar instead of making a new file.
+   */
+  saved: { path: string; key: string; motion: string } | null = null;
+
+  imageKey(): string {
+    const { doc, wall } = this.snapshot();
+    return JSON.stringify([this.loaded?.path, doc, wall, this.colours]);
+  }
+
   snapshot(): Snapshot {
-    return $state.snapshot({ doc: this.doc, wall: this.wall }) as Snapshot;
+    return $state.snapshot({ doc: this.doc, wall: this.wall, motion: this.motion }) as Snapshot;
   }
 
   /** Record a finished change (app.js commit): a merged burst ending where it began is no step. */
@@ -179,6 +250,7 @@ class AppState {
     if (!s) return;
     this.doc = s.doc;
     this.wall = s.wall;
+    this.motion = s.motion;
     this.commits++;
   }
 

@@ -1,5 +1,9 @@
 //! Reading source photos and writing wallpapers. Every write creates a new file: nothing is ever
-//! overwritten except a wallpaper's own sidecar.
+//! overwritten except a wallpaper's own sidecar and dot field.
+//!
+//! A wallpaper `<dir>/<stem>.png` has its settings in `<dir>/<stem>.stipple.json` and, for Dots, its
+//! dot field (for the animated wallpaper) in `<dir>/.stipple/<stem>/field.png`: hidden, so
+//! `omarchy theme bg next` (which rotates every image in the folder) never shows it.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Write};
@@ -10,6 +14,8 @@ use crate::sys::home;
 pub const MAX_READ: u64 = 64 * 1024 * 1024;
 pub const MAX_PNG: usize = 256 * 1024 * 1024;
 pub const MAX_SIDECAR: usize = 32 * 1024 * 1024;
+/// Largest dot field side (2 x 200 columns, and rows for a very tall crop).
+pub const MAX_FIELD: u32 = 8192;
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp"];
 const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
 
@@ -21,6 +27,11 @@ pub fn wallpapers_dir() -> Result<PathBuf, String> {
 /// `~/.config/omarchy/backgrounds`
 pub fn theme_backgrounds_dir() -> Result<PathBuf, String> {
     Ok(home()?.join(".config/omarchy/backgrounds"))
+}
+
+/// Where saved wallpapers live: the output folder and the theme backgrounds.
+pub fn wallpaper_roots() -> Result<Vec<PathBuf>, String> {
+    Ok(vec![wallpapers_dir()?, theme_backgrounds_dir()?])
 }
 
 fn ext_of(p: &Path) -> Option<String> {
@@ -146,19 +157,111 @@ pub fn inside(dir: &Path, path: &Path) -> Result<PathBuf, String> {
     Ok(p)
 }
 
-/// Write `<png stem>.stipple.json` next to a saved wallpaper. The JSON must parse.
-pub fn save_sidecar(dir: &Path, png: &Path, json: &str) -> Result<PathBuf, String> {
-    let png = inside(dir, png)?;
-    if ext_of(&png).as_deref() != Some("png") {
-        return Err("the sidecar belongs next to a PNG".into());
+/// Replace `path` with `bytes` in one step (a temporary file in the same folder, then a rename),
+/// so the shell plugin watching it never reads half a file.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let dir = path.parent().ok_or("bad path")?;
+    fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let name = path.file_name().and_then(|n| n.to_str()).ok_or("bad file name")?;
+    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    let f = File::create(&tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    write_all(&tmp, f, bytes)?;
+    fs::rename(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("{}: {e}", path.display())
+    })
+}
+
+fn png_stem(png: &Path) -> Result<&str, String> {
+    if ext_of(png).as_deref() != Some("png") {
+        return Err(format!("{} is not a PNG", png.display()));
     }
+    png.file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| "bad file name".into())
+}
+
+/// `<dir>/<stem>.stipple.json` for `<dir>/<stem>.png`.
+pub fn sidecar_path(png: &Path) -> Result<PathBuf, String> {
+    Ok(png.with_file_name(format!("{}.stipple.json", png_stem(png)?)))
+}
+
+/// `<dir>/.stipple/<stem>/field.png` for `<dir>/<stem>.png`.
+pub fn field_path(png: &Path) -> Result<PathBuf, String> {
+    let stem = png_stem(png)?;
+    let dir = png.parent().ok_or("bad path")?;
+    Ok(dir.join(".stipple").join(stem).join("field.png"))
+}
+
+/// A wallpaper PNG this app may write beside: an existing `.png` file somewhere under one of
+/// `roots` (the output folder, the theme backgrounds). Returns the canonical path.
+pub fn wallpaper_png(roots: &[PathBuf], path: &Path) -> Result<PathBuf, String> {
+    let p = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
+    let allowed = roots
+        .iter()
+        .filter_map(|d| d.canonicalize().ok())
+        .any(|d| p.starts_with(&d));
+    if !allowed || !p.is_file() || ext_of(&p).as_deref() != Some("png") {
+        return Err(format!("{} is not a saved wallpaper", p.display()));
+    }
+    Ok(p)
+}
+
+/// Write the sidecar of a wallpaper PNG (replacing it: motion changes rewrite only this). The
+/// JSON must parse.
+pub fn save_sidecar(png: &Path, json: &str) -> Result<PathBuf, String> {
     if json.len() > MAX_SIDECAR {
         return Err("the settings file is larger than 32 MB".into());
     }
     serde_json::from_str::<serde_json::Value>(json).map_err(|e| format!("invalid JSON: {e}"))?;
-    let stem = png.file_stem().and_then(|s| s.to_str()).ok_or("bad file name")?;
-    let path = png.with_file_name(format!("{stem}.stipple.json"));
-    fs::write(&path, json).map_err(|e| format!("{}: {e}", path.display()))?;
+    let path = sidecar_path(png)?;
+    write_atomic(&path, json.as_bytes())?;
+    Ok(path)
+}
+
+/// The sidecar of a PNG, if it has one.
+pub fn read_sidecar(png: &Path) -> Result<Option<String>, String> {
+    let path = sidecar_path(png)?;
+    match fs::metadata(&path) {
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+        Ok(m) if m.len() > MAX_SIDECAR as u64 => return Err(format!("{} is larger than 32 MB", path.display())),
+        Ok(_) => {}
+    }
+    fs::read_to_string(&path)
+        .map(Some)
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Encode an RGB dot field (3 bytes per dot, row-major) as a PNG: 8 bits, no colour profile, so
+/// the plugin's shader reads back exactly these bytes.
+pub fn encode_field(size: (u32, u32), rgb: &[u8]) -> Result<Vec<u8>, String> {
+    let (w, h) = size;
+    if !(1..=MAX_FIELD).contains(&w) || !(1..=MAX_FIELD).contains(&h) {
+        return Err(format!("the dot field is {w}x{h}, at most {MAX_FIELD} a side"));
+    }
+    if rgb.len() != w as usize * h as usize * 3 {
+        return Err(format!(
+            "the dot field has {} bytes, expected {}",
+            rgb.len(),
+            w as usize * h as usize * 3
+        ));
+    }
+    let mut out = Vec::new();
+    let mut enc = png::Encoder::new(&mut out, w, h);
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc.write_header().map_err(|e| format!("field.png: {e}"))?;
+    writer.write_image_data(rgb).map_err(|e| format!("field.png: {e}"))?;
+    writer.finish().map_err(|e| format!("field.png: {e}"))?;
+    Ok(out)
+}
+
+/// Write the dot field of a wallpaper PNG (replacing it).
+pub fn save_field(png: &Path, size: (u32, u32), rgb: &[u8]) -> Result<PathBuf, String> {
+    let bytes = encode_field(size, rgb)?;
+    let path = field_path(png)?;
+    write_atomic(&path, &bytes)?;
     Ok(path)
 }
 
@@ -170,6 +273,31 @@ pub fn copy_unique(src: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
     let (path, f) = create_unique(dest_dir, stem, &ext)?;
     write_all(&path, f, &bytes)?;
     Ok(path)
+}
+
+/// Copy a wallpaper into `dest_dir` with its sidecar and dot field, under the (possibly suffixed)
+/// new name. The copied sidecar's `image.file` names the copy.
+pub fn copy_wallpaper(png: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
+    let dest = copy_unique(png, dest_dir)?;
+    if let Some(json) = read_sidecar(png)? {
+        let json = match serde_json::from_str::<serde_json::Value>(&json) {
+            Ok(mut v) => {
+                if let Some(image) = v.get_mut("image").and_then(|i| i.as_object_mut()) {
+                    let name = dest.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+                    image.insert("file".into(), name.into());
+                }
+                serde_json::to_string(&v).map_err(|e| e.to_string())?
+            }
+            Err(_) => json,
+        };
+        save_sidecar(&dest, &json)?;
+    }
+    let field = field_path(png)?;
+    if field.is_file() {
+        let bytes = fs::read(&field).map_err(|e| format!("{}: {e}", field.display()))?;
+        write_atomic(&field_path(&dest)?, &bytes)?;
+    }
+    Ok(dest)
 }
 
 /// Files a wallpaper may be set from: our own output folder or the theme backgrounds.
@@ -237,10 +365,23 @@ mod tests {
         assert!(save_png(&d, "cat", (1920, 1080), &png(1920, 1079)).is_err());
         assert!(save_png(&d, "cat", (1920, 1080), b"not a png at all, not at all").is_err());
 
-        let s = save_sidecar(&d, &b, "{\"v\":1}").unwrap();
+        let roots = [d.clone()];
+        let b = wallpaper_png(&roots, &b).unwrap();
+        let s = save_sidecar(&b, "{\"v\":1}").unwrap();
         assert_eq!(s.file_name().unwrap(), "cat-stipple-1920x1080-2.stipple.json");
-        assert!(save_sidecar(&d, &b, "{nope").is_err());
-        assert!(save_sidecar(&d, Path::new("/etc/hostname"), "{}").is_err());
+        assert_eq!(read_sidecar(&b).unwrap().as_deref(), Some("{\"v\":1}"));
+        save_sidecar(&b, "{\"v\":2}").unwrap();
+        assert_eq!(read_sidecar(&b).unwrap().as_deref(), Some("{\"v\":2}"));
+        assert!(save_sidecar(&b, "{nope").is_err());
+        assert_eq!(read_sidecar(&a).unwrap(), None);
+        assert!(wallpaper_png(&roots, Path::new("/etc/hostname")).is_err());
+        assert!(wallpaper_png(&roots, &s).is_err());
+        // no temporary files left behind
+        let names: Vec<_> = fs::read_dir(&d).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert!(
+            names.iter().all(|n| !n.to_string_lossy().ends_with(".tmp")),
+            "{names:?}"
+        );
 
         let other = tmp("copy");
         let c1 = copy_unique(&a, &other).unwrap();
@@ -249,6 +390,46 @@ mod tests {
         assert_eq!(c2.file_name().unwrap(), "cat-stipple-1920x1080-2.png");
         let _ = fs::remove_dir_all(&d);
         let _ = fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn dot_fields() {
+        let d = tmp("field");
+        let a = save_png(&d, "cat", (4, 4), &png(4, 4)).unwrap();
+        let rgb: Vec<u8> = (0..6 * 8 * 3).map(|i| (i * 37 % 256) as u8).collect();
+        let f = save_field(&a, (6, 8), &rgb).unwrap();
+        assert_eq!(f, d.join(".stipple/cat-stipple-4x4/field.png"));
+        let dec = png::Decoder::new(std::io::BufReader::new(File::open(&f).unwrap()));
+        let mut r = dec.read_info().unwrap();
+        let mut buf = vec![0; r.output_buffer_size().unwrap()];
+        let info = r.next_frame(&mut buf).unwrap();
+        assert_eq!((info.width, info.height, info.color_type), (6, 8, png::ColorType::Rgb));
+        assert_eq!(&buf[..info.buffer_size()], &rgb[..]);
+        assert!(save_field(&a, (6, 8), &rgb[1..]).is_err());
+        assert!(save_field(&a, (0, 8), &[]).is_err());
+        assert!(save_field(&a, (MAX_FIELD + 1, 1), &vec![0; (MAX_FIELD as usize + 1) * 3]).is_err());
+
+        // a copy takes its sidecar and field along under the new name
+        save_sidecar(&a, "{\"image\":{\"file\":\"cat-stipple-4x4.png\",\"width\":4},\"v\":1}").unwrap();
+        let theme = tmp("field-theme");
+        copy_unique(&a, &theme).unwrap();
+        let c = copy_wallpaper(&a, &theme).unwrap();
+        assert_eq!(c.file_name().unwrap(), "cat-stipple-4x4-2.png");
+        let v: serde_json::Value = serde_json::from_str(&read_sidecar(&c).unwrap().unwrap()).unwrap();
+        assert_eq!(v["image"]["file"], "cat-stipple-4x4-2.png");
+        assert_eq!(v["image"]["width"], 4);
+        assert_eq!(fs::read(field_path(&c).unwrap()).unwrap(), fs::read(&f).unwrap());
+        assert_eq!(
+            field_path(&c).unwrap(),
+            theme.join(".stipple/cat-stipple-4x4-2/field.png")
+        );
+        // a plain PNG copies alone
+        let plain = save_png(&d, "dog", (4, 4), &png(4, 4)).unwrap();
+        let p = copy_wallpaper(&plain, &theme).unwrap();
+        assert_eq!(read_sidecar(&p).unwrap(), None);
+        assert!(!field_path(&p).unwrap().exists());
+        let _ = fs::remove_dir_all(&d);
+        let _ = fs::remove_dir_all(&theme);
     }
 
     #[test]

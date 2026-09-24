@@ -7,6 +7,7 @@
   import CropModal from '$lib/components/CropModal.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import Looks from '$lib/components/Looks.svelte';
+  import Motion from '$lib/components/Motion.svelte';
   import Notice from '$lib/components/Notice.svelte';
   import PerfOverlay from '$lib/components/PerfOverlay.svelte';
   import Preview from '$lib/components/Preview.svelte';
@@ -15,16 +16,17 @@
   import Tone from '$lib/components/Tone.svelte';
   import Wallpaper from '$lib/components/Wallpaper.svelte';
   import { boxPx } from '$lib/layout';
-  import { fontsReady, IMAGE_EXTS, openPath, schedule } from '$lib/pipeline';
+  import { fontsReady, IMAGE_EXTS, openPath, schedule, syncMotion } from '$lib/pipeline';
   import { app } from '$lib/state.svelte';
   import { errorText, inTauri, monitors, themeColors } from '$lib/tauri';
 
-  type Tab = 'look' | 'tone' | 'wall';
+  type Tab = 'look' | 'tone' | 'wall' | 'motion';
   let tab: Tab = $state('look');
   const TABS: { id: Tab; label: string }[] = [
     { id: 'look', label: 'Look' },
     { id: 'tone', label: 'Tone' },
     { id: 'wall', label: 'Wallpaper' },
+    { id: 'motion', label: 'Motion' },
   ];
   const dev = import.meta.env.DEV;
 
@@ -40,7 +42,17 @@
     JSON.stringify(app.wall);
     void app.loaded;
     void app.peeking;
+    void app.previewMinute;
     untrack(schedule);
+  });
+
+  // the preview's motion frames follow the motion settings and the play button
+  $effect(() => {
+    JSON.stringify(app.motion);
+    JSON.stringify(app.support);
+    void app.playing;
+    void app.loaded;
+    untrack(() => syncMotion(true));
   });
 
   async function pickFile() {
@@ -199,8 +211,10 @@
         <Size />
       {:else if tab === 'tone'}
         <Tone />
-      {:else}
+      {:else if tab === 'wall'}
         <Wallpaper />
+      {:else}
+        <Motion />
       {/if}
     </div>
     <div class="foot"><Actions /></div>

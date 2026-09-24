@@ -10,6 +10,8 @@
     "allow-read-file",
     "allow-save-png",
     "allow-save-sidecar",
+    "allow-save-field",
+    "allow-read-sidecar",
     "allow-set-wallpaper",
     "allow-add-to-theme-backgrounds",
     "allow-theme-colors",

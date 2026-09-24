@@ -17,6 +17,8 @@ pub fn run() {
             commands::read_file,
             commands::save_png,
             commands::save_sidecar,
+            commands::save_field,
+            commands::read_sidecar,
             commands::set_wallpaper,
             commands::add_to_theme_backgrounds,
             commands::theme_colors,

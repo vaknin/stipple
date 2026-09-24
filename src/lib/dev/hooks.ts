@@ -12,6 +12,18 @@ import { devLog, devSave, startBridge } from './bridge';
 
 const frame = () => new Promise<number>(r => requestAnimationFrame(r));
 
+const nativeRaf = window.requestAnimationFrame.bind(window);
+const nativeCancel = window.cancelAnimationFrame.bind(window);
+
+/**
+ * WebKitGTK pauses animation frames while the window is on a hidden workspace: `TW.timerFrames()`
+ * runs them on a 16 ms timer instead, so scripts can render a parked window (timings are not real).
+ */
+function timerFrames(on = true) {
+  window.requestAnimationFrame = on ? cb => window.setTimeout(() => cb(performance.now()), 16) : nativeRaf;
+  window.cancelAnimationFrame = on ? id => window.clearTimeout(id) : nativeCancel;
+}
+
 /** Wait until the preview shows the current settings (no render pending). */
 async function settle(frames = 3) {
   for (let i = 0; i < frames; i++) await frame();
@@ -64,7 +76,7 @@ async function bench(mode: 'braille' | 'ascii' | 'blocks', cols: number, steps =
 export function install() {
   const TW = {
     app, engine, perf, thumbs, openPath, schedule, drawPreview, settle, save, setAsWallpaper,
-    shotPreview, shotFull, devSave, devLog, gridLines, bench, currentGrid, layoutFor, rasterize, Surface,
+    shotPreview, shotFull, devSave, devLog, gridLines, bench, currentGrid, layoutFor, rasterize, Surface, timerFrames,
     lines: () => (app.grid ? gridLines(app.grid) : []),
   };
   (window as unknown as { TW: typeof TW }).TW = TW;

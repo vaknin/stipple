@@ -64,6 +64,17 @@ declare module '$typist/convert.js' {
     blocks: BlocksKind;
     color: boolean;
     tone: Partial<Tone>;
+    /** Stipple: also return the dot field (Dots only). */
+    field?: boolean;
+  }
+
+  /** One entry per dot (2 cols x 4 rows): lightness (1 = paper), dithered dots, edge-forced dots. */
+  export interface DotField {
+    width: number;
+    height: number;
+    L: Float32Array;
+    dots: Uint8Array;
+    forced: Uint8Array;
   }
 
   /** One cell per code point, row-major. fg / bg are 0xRRGGBB per cell (colour blocks only). */
@@ -76,6 +87,8 @@ declare module '$typist/convert.js' {
     bg: Uint32Array | null;
     ink: number;
     tone?: ToneStats;
+    /** With opts.field, Dots only. */
+    field?: DotField | null;
   }
 
   /** Raw RGBA pixels, as ImageData has them. */
@@ -208,6 +221,20 @@ declare module '$typist/targets.js' {
   export function cellAspect(id: 'plain', mode: Mode): number;
   /** Rows that keep a square crop square for a cell aspect. */
   export function rowsFor(cols: number, aspect: number): number;
+}
+
+declare module '$typist/dither.js' {
+  import type { Dither } from '$typist/convert.js';
+  /** Dither a W x H lightness grid (1 = paper) into dots (1 = raised). */
+  export function ditherDots(L: ArrayLike<number>, W: number, H: number, method?: Dither,
+    opts?: { edge?: unknown; edges?: number; cleanup?: boolean }): Uint8Array;
+  /** Pack a (2*cols) x (4*rows) dot grid into Braille code points (U+2800 + bits). */
+  export function encodeBraille(dots: ArrayLike<number>, W: number, H: number): {
+    cols: number;
+    rows: number;
+    cp: Uint32Array;
+    ink: number;
+  };
 }
 
 declare module '$typist/export.js' {

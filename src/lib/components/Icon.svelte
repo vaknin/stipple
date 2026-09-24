@@ -17,6 +17,9 @@
     check: 'M5 12.5l4.5 4.5L19 7.5',
     alert: 'M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
     monitor: 'M3 4h18v12H3zM8 20h8M12 16v4',
+    play: 'M7 4.5v15l12-7.5z',
+    pause: 'M8 5v14M16 5v14',
+    dice: 'M4 4h16v16H4zM8.5 8.5h.01M15.5 8.5h.01M12 12h.01M8.5 15.5h.01M15.5 15.5h.01',
   } as const;
   export type IconName = keyof typeof PATHS;
 </script>

@@ -130,10 +130,21 @@ export function createConverter() {
 
     stats.encodes++;
     let g;
+    let field = null;
     if (o.mode === 'braille') {
       const dots = ditherDots(L, W, H, o.dither, { edge: L.edge, edges: tone.edges });
       g = encodeBraille(dots, W, H);
       g.fg = g.bg = null;
+      // Stipple patch: the dot field for animated wallpapers (o.field): the lightness, the dots and
+      // the dots edge emphasis forced on (ditherDots' rule), one entry per dot
+      if (o.field) {
+        const forced = new Uint8Array(W * H);
+        if (tone.edges > 0 && L.edge) {
+          const thr = 0.55 - 0.45 * Math.min(1, tone.edges);
+          for (let i = 0; i < forced.length; i++) if (L.edge.thin[i] && L.edge.mag[i] > thr) forced[i] = 1;
+        }
+        field = { width: W, height: H, L: Float32Array.from(L), dots, forced };
+      }
     } else if (o.mode === 'blocks') {
       if (colorBlocks) {
         // lab depends only on the tone entry: cache it there
@@ -150,7 +161,7 @@ export function createConverter() {
     }
     return {
       mode: o.mode, cols: g.cols, rows: g.rows, cp: g.cp, fg: g.fg, bg: g.bg, ink: g.ink,
-      tone: L.stats,
+      tone: L.stats, field,
     };
   }
 

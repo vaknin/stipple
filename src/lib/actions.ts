@@ -2,31 +2,31 @@
 //
 // Output: ~/Pictures/Wallpapers/<photo>-stipple-<W>x<H>.png (never overwritten; -2, -3… on
 // collision) plus <same name>.stipple.json, the grid and every setting, so a later renderer (an
-// animated one, an SVG export) can redraw or re-characterise the art without the photo.
+// animated one, an SVG export) can redraw or re-characterise the art without the photo. Dots also
+// get their dot field, .stipple/<same name>/field.png, which the shell plugin animates.
+// Changing only the motion of a saved wallpaper rewrites its sidecar: the plugin picks it up live.
 
 import { gridLines, type Grid } from '$typist/convert.js';
 import { cellAspect } from './engine/engine';
 import { baseName, currentGrid, layoutFor, schedule } from './pipeline';
 import type { Layout } from './layout';
+import { motionFor, packField, supportFor, type Motion } from './motion';
 import { DOT_R, FONT, renderPng, type Colours } from './render';
 import { app, effectiveCrop, type Snapshot } from './state.svelte';
-import { addToThemeBackgrounds, errorText, savePng, saveSidecar, setWallpaper } from './tauri';
+import { addToThemeBackgrounds, errorText, saveField, savePng, saveSidecar, setWallpaper } from './tauri';
 
 export const ENGINE = { name: 'typist', repo: 'https://github.com/winchxyz/typist', commit: '7081dce' };
 const APP_VERSION = '0.1.0';
+export const FORMAT = 'stipple/2';
 
-let saved: { path: string; key: string } | null = null;
+/** `.stipple/<stem>/field.png`, relative to the wallpaper's folder. */
+export const fieldFile = (pngPath: string) => `.stipple/${baseName(pngPath).replace(/\.png$/i, '')}/field.png`;
 
-/** Everything that changes the saved image. */
-function saveKey(): string {
-  return JSON.stringify([app.loaded?.path, app.snapshot(), app.colours]);
-}
-
-function sidecar(grid: Grid, snap: Snapshot, colours: Colours, pngPath: string, layout: Layout) {
+function sidecar(grid: Grid, snap: Snapshot, motion: Motion, colours: Colours, pngPath: string, layout: Layout) {
   const loaded = app.loaded!;
   const { width, height } = snap.wall;
   return {
-    format: 'stipple/1',
+    format: FORMAT,
     created: new Date().toISOString(),
     app: { name: 'Stipple', version: APP_VERSION },
     engine: ENGINE,
@@ -40,12 +40,21 @@ function sidecar(grid: Grid, snap: Snapshot, colours: Colours, pngPath: string, 
     image: { file: baseName(pngPath), width, height },
     /** Every Typist option; cols null = auto. crop is the one sampled (with aspect when not square). */
     doc: { ...snap.doc, crop: effectiveCrop(snap.doc, snap.wall) },
-    /** Wallpaper options; ink / paper null = Typist's invert rule. */
+    /** Wallpaper options; ink / paper null = Typist's invert rule, surround null = paper. */
     wallpaper: snap.wall,
     colours,
+    /**
+     * What the shell plugin plays: effects this style cannot play are off, night colours resolved.
+     * Night start / end are minutes since midnight, fade is minutes.
+     */
+    motion,
+    /** The Motion tab as it was left (reopening restores it; null night colours = swapped). */
+    motionSettings: snap.motion,
+    /** The dot field (Dots only): one texel per dot, see motion.ts packField. */
+    field: grid.field ? { file: fieldFile(pngPath), width: grid.field.width, height: grid.field.height } : null,
     layout: {
       cellW: layout.cellW, cellH: layout.cellH, x: layout.x, y: layout.y, artW: layout.artW, artH: layout.artH,
-      clip: layout.clip, cellAspect: cellAspect(grid.mode), font: FONT, dotR: DOT_R,
+      inner: layout.inner, clip: layout.clip, cellAspect: cellAspect(grid.mode), font: FONT, dotR: DOT_R,
     },
     grid: {
       mode: grid.mode,
@@ -63,25 +72,40 @@ function sidecar(grid: Grid, snap: Snapshot, colours: Colours, pngPath: string, 
   };
 }
 
-/** Save the wallpaper (or return the file saved for these exact settings). */
+/**
+ * Save the wallpaper (or return the file saved for these exact settings). When only the motion
+ * changed since, that file's sidecar is rewritten instead.
+ */
 export async function save(): Promise<string | null> {
   if (!app.loaded || app.busy) return null;
-  const key = saveKey();
-  if (saved && saved.key === key) return saved.path;
+  const key = app.imageKey();
+  const prev = app.saved && app.saved.key === key ? app.saved : null;
+  const motionKey = JSON.stringify(app.playMotion);
+  if (prev && prev.motion === motionKey) return prev.path;
   app.busy = 'Saving…';
   try {
     // everything is read before the first await: an edit during the save belongs to the next one
     const snap = app.snapshot();
     const colours = { ...app.colours };
+    const motion = motionFor(snap.motion, supportFor(snap.doc), colours);
     const name = app.loaded.name;
     const grid = await currentGrid();
     const { width, height } = snap.wall;
     const layout = layoutFor(grid, width, height, snap.wall);
-    const png = await renderPng(grid, layout, colours, width, height);
-    const path = await savePng(new Uint8Array(await png.arrayBuffer()), name, width, height);
-    await saveSidecar(path, JSON.stringify(sidecar(grid, snap, colours, path, layout)));
-    saved = { path, key };
-    app.say('ok', `Saved ${baseName(path)} in ~/Pictures/Wallpapers.`);
+    let path: string;
+    if (prev) {
+      path = prev.path;
+      await saveSidecar(path, JSON.stringify(sidecar(grid, snap, motion, colours, path, layout)));
+      app.say('ok', `Updated the motion of ${baseName(path)}.`);
+    } else {
+      const png = await renderPng(grid, layout, colours, width, height);
+      path = await savePng(new Uint8Array(await png.arrayBuffer()), name, width, height);
+      // the field before the sidecar: the plugin loads both when the sidecar appears
+      if (grid.field) await saveField(path, packField(grid.field), grid.field.width, grid.field.height);
+      await saveSidecar(path, JSON.stringify(sidecar(grid, snap, motion, colours, path, layout)));
+      app.say('ok', `Saved ${baseName(path)} in ~/Pictures/Wallpapers.`);
+    }
+    app.saved = { path, key, motion: motionKey };
     return path;
   } catch (e) {
     app.say('error', `Could not save: ${errorText(e)}`);

@@ -45,8 +45,24 @@ export const savePng = (png: Uint8Array, stem: string, width: number, height: nu
     headers: { 'x-stem': encodeURIComponent(stem), 'x-size': `${width}x${height}` },
   });
 
+/** Writes (or replaces) `<png stem>.stipple.json` next to a saved wallpaper. */
 export const saveSidecar = (pngPath: string, json: string) =>
   invoke<string>('save_sidecar', { pngPath, json });
+
+/** Writes `<dir>/.stipple/<stem>/field.png` from a packed RGB dot field (motion.packField). */
+export const saveField = (pngPath: string, rgb: Uint8Array, width: number, height: number) =>
+  invoke<string>('save_field', rgb, {
+    headers: { 'x-png-path': encodeURIComponent(pngPath), 'x-size': `${width}x${height}` },
+  });
+
+export interface SidecarFile {
+  json: string;
+  /** In the output folder or the theme backgrounds: Save may update its sidecar in place. */
+  editable: boolean;
+}
+
+/** The sidecar of a PNG, or null when it has none. */
+export const readSidecar = (path: string) => invoke<SidecarFile | null>('read_sidecar', { path });
 
 export const setWallpaper = (path: string) => invoke<SetResult>('set_wallpaper', { path });
 

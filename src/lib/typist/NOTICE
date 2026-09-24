@@ -42,6 +42,9 @@ js/crop.js     The frame has the crop's aspect (frame() also returns its width `
                fitCropFor(crop, w, h) fits a turned rectangle (a square is unchanged).
 js/imageio.js  autoCrop(img, aspect): frames a cut-out's box and biases portraits for a rectangle
                (aspect 1 returns upstream's result).
+js/convert.js  Dot field (animated wallpapers): with opts.field, a Dots result also carries
+               `field` { width, height, L, dots, forced }: the toned lightness, the dithered dots
+               and the dots edge emphasis forced on, one entry per dot. Output is unchanged.
 js/ascii.js    resampleL builds its per-axis taps once as flat typed arrays (bit-identical).
                asciiCells folds that resample into the circle weights when the input has a whole
                number of samples per cell (the converter's 4 x 8), instead of building a 1.4 M
