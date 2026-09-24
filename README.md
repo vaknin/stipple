@@ -15,7 +15,7 @@ instead, with the art fitted (or filled) and the rest in the paper colour, so no
    - **Look**: Photo, Texture, Sketch, Soft, Poster (thumbnails are made from your photo).
    - **Style**: Dots, Letters or Blocks, with Dithering (Atkinson, Floyd–Steinberg, Ordered,
      Threshold), Letters (Shape-aware, Density), Blocks (Quarters, Halves, Colour).
-   - **Columns**: type a number (4–200), or **Auto**. Rows follow from the crop.
+   - **Columns**: type a number (4–4096), or **Auto**. Rows follow from the crop.
    - **Tone**: Invert, Auto levels, Brightness, Contrast, Gamma, Detail, Edges. Double-click a
      slider to reset it; click its value to type one.
    - **Crop** (`F`): move, zoom (wheel, `+`/`-`), rotate (`R`), Fit; Enter applies, Escape cancels.
@@ -79,14 +79,14 @@ make a new version from it (any other change saves a new file).
   art matches the Typist web app's proportions.
 - **Auto columns** are derived from the output instead of Typist's fixed 48/72/56 (too coarse for a
   1080p screen): the column count whose cells come out about **15 px tall** on the wallpaper.
-  Rows = art height / 15, columns = rows / cell aspect, clamped to 4–200. At 1920×1080 that is 125
+  Rows = art height / 15, columns = rows / cell aspect, clamped to 4–4096 (the saved dot field's 8192 px side). At 1920×1080 that is 125
   columns for Dots (the hand-made reference used about 125), 156 for Letters and 144 for Blocks.
 - **Crop to screen aspect** (off by default: the crop is square, as in Typist) crops the photo to
   the shape of the space inside the margin, so the art fills the screen instead of leaving paper at
   the sides. The crop follows the output size and margin. Rows = columns × cell aspect / crop
   aspect, and Auto columns use the art's height (the inner height, or its width / aspect if that is
-  smaller). On a 16:9 screen that asks for more than 200 columns, so Auto is capped there: at
-  1920×1080 Dots comes out 200×65, cells ~16.6 px tall. Turning it on moves an upright crop just
+  smaller). On a 16:9 screen that means more columns: at 1920×1080 Dots comes out 222 wide.
+  Turning it on moves an upright crop just
   enough to keep it on the photo.
 - The art is always laid out at the final size, never scaled afterwards. Paper fills everything
   behind and around it, so there is no seam.

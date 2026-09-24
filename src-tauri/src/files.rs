@@ -14,7 +14,7 @@ use crate::sys::home;
 pub const MAX_READ: u64 = 64 * 1024 * 1024;
 pub const MAX_PNG: usize = 256 * 1024 * 1024;
 pub const MAX_SIDECAR: usize = 32 * 1024 * 1024;
-/// Largest dot field side (2 x 200 columns, and rows for a very tall crop).
+/// Largest dot field side (2 x 4096 columns, layout.ts COLS_MAX).
 pub const MAX_FIELD: u32 = 8192;
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "cr3"];
 const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";

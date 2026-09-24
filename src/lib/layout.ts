@@ -48,7 +48,8 @@ export interface Layout {
 
 export const MARGIN_MAX = 30;
 export const COLS_MIN = 4;
-export const COLS_MAX = 200;
+/** The saved dot field is at most 8192 px a side (files.rs MAX_FIELD), 2 dots per column. */
+export const COLS_MAX = 4096;
 /** Auto columns aim for cells about this tall in output pixels. */
 export const AUTO_CELL_PX = 15;
 

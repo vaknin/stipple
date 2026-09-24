@@ -177,14 +177,15 @@ describe('auto columns', () => {
 
   test('portrait uses the width, fill the long side, margins shrink it', () => {
     expect(autoColumns(ASPECT.braille, o(1080, 1920))).toBe(125);
-    expect(autoColumns(ASPECT.braille, o(1920, 1080, 'fill'))).toBe(COLS_MAX);
+    expect(autoColumns(ASPECT.braille, o(1920, 1080, 'fill'))).toBe(222);
     expect(autoColumns(ASPECT.blocks, o(1280, 720, 'fill'))).toBe(171);
     expect(autoColumns(ASPECT.braille, o(1920, 1080, 'fit', 10))).toBeLessThan(125);
   });
 
   test('clamped to the column range', () => {
     expect(autoColumns(ASPECT.braille, o(7, 5))).toBe(COLS_MIN);
-    expect(autoColumns(ASPECT.ascii, o(7680, 4320))).toBe(COLS_MAX);
+    expect(autoColumns(ASPECT.ascii, o(7680, 4320))).toBe(624);
+    expect(autoColumns(ASPECT.braille, o(65536, 65536))).toBe(COLS_MAX);
   });
 });
 
@@ -236,8 +237,8 @@ describe('auto columns, crop to the screen aspect', () => {
     }
   });
 
-  test('a wide crop needs more columns; 16:9 at 1080p hits the cap', () => {
-    expect(autoColumns(ASPECT.braille, o(1920, 1080), 16 / 9)).toBe(COLS_MAX);
+  test('a wide crop needs more columns', () => {
+    expect(autoColumns(ASPECT.braille, o(1920, 1080), 16 / 9)).toBe(222);
     expect(autoColumns(ASPECT.braille, o(1280, 720), 16 / 9)).toBe(148);
     // a portrait screen: the width limits the art
     expect(autoColumns(ASPECT.braille, o(1080, 1920), 9 / 16)).toBe(125);
