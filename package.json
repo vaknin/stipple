@@ -1,6 +1,6 @@
 {
   "name": "stipple",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Turn a photo into a text-art wallpaper for Omarchy, with the Typist engine.",
   "private": true,
   "type": "module",
