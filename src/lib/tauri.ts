@@ -70,6 +70,12 @@ export interface SidecarFile {
 /** The sidecar of a PNG, or null when it has none. */
 export const readSidecar = (path: string) => invoke<SidecarFile | null>('read_sidecar', { path });
 
+/** Remember the photo and settings the app is left with (~/.local/state/stipple/session.json). */
+export const saveSession = (json: string) => invoke<void>('save_session', { json });
+
+/** The session the app was last left with, or null. */
+export const readSession = () => invoke<string | null>('read_session');
+
 export const setWallpaper = (path: string) => invoke<SetResult>('set_wallpaper', { path });
 
 export const addToThemeBackgrounds = (path: string) => invoke<string>('add_to_theme_backgrounds', { path });

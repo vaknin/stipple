@@ -159,12 +159,17 @@ class AppState {
   undoLabel: string | null = $state(null);
   redoLabel: string | null = $state(null);
 
+  /** Called after every history step (commit, undo, redo, a new photo): session.ts saves then. */
+  afterStep: (() => void) | null = null;
+
   history = new History<Snapshot>({
     onChange: h => {
       this.canUndo = h.canUndo;
       this.canRedo = h.canRedo;
       this.undoLabel = h.undoLabel;
       this.redoLabel = h.redoLabel;
+      // after the caller is done: undo / redo restore the snapshot once this returns
+      if (this.afterStep) queueMicrotask(this.afterStep);
     },
   });
 

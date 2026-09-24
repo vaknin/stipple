@@ -335,6 +335,7 @@ export async function openPath(path: string, { asPhoto = false } = {}) {
   }
 }
 
+/** A photo with its settings: from a sidecar (reopening a wallpaper) or the session (resuming). */
 interface SidecarSpec {
   source: { path: string; name: string };
   doc: unknown;
@@ -342,11 +343,12 @@ interface SidecarSpec {
   motion: unknown;
 }
 
-function parseSidecar(json: string): SidecarSpec | null {
+/** A sidecar (`stipple/…`) or a session (`stipple-session/…`) file, parsed. */
+function parseSidecar(json: string, format = /^stipple\//): SidecarSpec | null {
   try {
     const s = JSON.parse(json) as Record<string, unknown>;
     const src = s.source as Record<string, unknown> | undefined;
-    if (!/^stipple\//.test(String(s.format)) || typeof src?.path !== 'string') return null;
+    if (!format.test(String(s.format)) || typeof src?.path !== 'string') return null;
     return {
       source: { path: src.path, name: typeof src.name === 'string' ? src.name : baseName(src.path).replace(/\.[^.]+$/, '') },
       doc: s.doc,
@@ -373,13 +375,53 @@ async function reopen(pngPath: string, spec: SidecarSpec, editable: boolean, seq
   }
   if (seq !== loadSeq) return;
   await adopt(photo, spec.source.path, spec.source.name);
-  app.doc = docFrom(spec.doc);
-  app.wall = wallFrom(spec.wallpaper);
-  app.motion = cleanMotion(spec.motion);
-  app.resetHistory();
+  applySpec(spec);
   app.saved = editable ? { path: pngPath, key: app.imageKey(), motion: JSON.stringify(app.playMotion) } : null;
   app.say('info', editable
     ? `Reopened ${file}. A motion change updates it when you save; other changes save a new file.`
     : `Reopened ${file}. Saving makes a new file in ~/Pictures/Wallpapers.`);
   schedule();
+}
+
+/** A spec's settings over the adopted photo, as the start of its history. */
+function applySpec(spec: SidecarSpec) {
+  app.doc = docFrom(spec.doc);
+  app.wall = wallFrom(spec.wallpaper);
+  app.motion = cleanMotion(spec.motion);
+  // an older file's crop may have been square: the art's shape can move it off the photo
+  app.keepCropOnPhoto();
+  app.resetHistory();
+}
+
+/**
+ * Resume the session (session.ts): the photo the app was last left with, with its settings.
+ * Nothing happens when a photo was opened meanwhile; a photo that is gone leaves the app empty.
+ */
+export async function resume(json: string) {
+  const spec = parseSidecar(json, /^stipple-session\//);
+  if (!spec) return;
+  const seq = ++loadSeq;
+  app.loading = true;
+  try {
+    await fontsReady;
+    let photo: Photo;
+    try {
+      photo = await decodePath(spec.source.path);
+    } catch (e) {
+      if (seq !== loadSeq) return;
+      const why = e instanceof ImageError ? imageErrorMessage(e) : errorText(e);
+      // file errors already name the file
+      app.say('warn', why.includes(spec.source.path)
+        ? `Could not reopen the last photo: ${why}`
+        : `Could not reopen the last photo, ${spec.source.path}: ${why}`);
+      return;
+    }
+    if (seq !== loadSeq) return;
+    await adopt(photo, spec.source.path, spec.source.name);
+    applySpec(spec);
+    app.saved = null;
+    schedule();
+  } finally {
+    if (seq === loadSeq) app.loading = false;
+  }
 }

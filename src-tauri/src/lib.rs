@@ -21,6 +21,8 @@ pub fn run() {
             commands::save_field,
             commands::remove_motion_files,
             commands::read_sidecar,
+            commands::save_session,
+            commands::read_session,
             commands::set_wallpaper,
             commands::add_to_theme_backgrounds,
             commands::theme_colors,

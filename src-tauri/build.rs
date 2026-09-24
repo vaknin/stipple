@@ -8,6 +8,8 @@ const COMMANDS: &[&str] = &[
     "save_field",
     "remove_motion_files",
     "read_sidecar",
+    "save_session",
+    "read_session",
     "set_wallpaper",
     "add_to_theme_backgrounds",
     "theme_colors",

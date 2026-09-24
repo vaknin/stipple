@@ -13,6 +13,8 @@
     "allow-save-field",
     "allow-remove-motion-files",
     "allow-read-sidecar",
+    "allow-save-session",
+    "allow-read-session",
     "allow-set-wallpaper",
     "allow-add-to-theme-backgrounds",
     "allow-theme-colors",

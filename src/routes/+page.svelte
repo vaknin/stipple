@@ -16,6 +16,7 @@
   import Wallpaper from '$lib/components/Wallpaper.svelte';
   import { boxPx } from '$lib/layout';
   import { fontsReady, IMAGE_EXTS, openPath, schedule, syncMotion } from '$lib/pipeline';
+  import * as session from '$lib/session';
   import { app } from '$lib/state.svelte';
   import { errorText, inTauri, monitors, themeColors } from '$lib/tauri';
 
@@ -42,6 +43,15 @@
     void app.loaded;
     void app.peeking;
     untrack(schedule);
+  });
+
+  // every change is remembered for the next launch (session.ts)
+  $effect(() => {
+    JSON.stringify(app.doc);
+    JSON.stringify(app.wall);
+    JSON.stringify(app.motion);
+    void app.loaded;
+    untrack(session.changed);
   });
 
   // the preview's motion frames follow the motion settings and the play button
@@ -119,6 +129,7 @@
         })
         .catch(e => app.say('warn', `Could not read the monitors from Hyprland: ${errorText(e)}`));
       themeColors().then(t => (app.theme = t)).catch(() => {});
+      void session.start();
       getCurrentWebview()
         .onDragDropEvent(ev => {
           const p = ev.payload;
@@ -145,6 +156,7 @@
   {onkeydown}
   onkeyup={e => { if (e.key === '\\') peek(false); }}
   onblur={() => peek(false)}
+  onbeforeunload={session.flush}
 />
 
 <div class="app">

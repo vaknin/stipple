@@ -94,6 +94,18 @@ pub async fn read_sidecar(path: String) -> Result<Option<Sidecar>, String> {
     Ok(files::read_sidecar(&png)?.map(|json| Sidecar { json, editable }))
 }
 
+/// Remember the photo and settings the app is left with (see files::session_path).
+#[tauri::command]
+pub async fn save_session(json: String) -> Result<(), String> {
+    files::save_session(&files::session_path()?, &json)
+}
+
+/// The photo and settings the app was last left with, if any.
+#[tauri::command]
+pub async fn read_session() -> Result<Option<String>, String> {
+    files::read_session(&files::session_path()?)
+}
+
 /// `omarchy theme bg set <path>`, then checks the symlink and `omarchy theme bg current`.
 #[tauri::command]
 pub async fn set_wallpaper(path: String) -> Result<omarchy::SetResult, String> {

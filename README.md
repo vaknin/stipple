@@ -46,6 +46,10 @@ joins that theme's rotation.
 | `\` (hold) | Show the photo instead of the art |
 | `S` | Save |
 
+**Picks up where you left off**: Stipple remembers the open photo and every setting (in
+`~/.local/state/stipple/session.json`, written at each change) and reopens them at the next launch.
+The undo history starts fresh. If the photo has moved since, it starts empty and says so.
+
 **Reopen** a saved wallpaper by opening its PNG: Stipple loads the photo it was made from with every
 setting and the motion, so you can change the motion later (Save updates the file in place) or
 make a new version from it (any other change saves a new file).
@@ -161,7 +165,8 @@ render a parked window anyway.
   (PNG/JPEG/WebP ≤ 64 MB; the dialog and drag-and-drop give paths, not bytes), `save_png` (raw
   body, checks the PNG is exactly W×H), `save_sidecar` (replaced atomically), `save_field` (raw RGB
   body, encoded as `field.png`, `frames.png` or `glyphs.png`), `remove_motion_files` (the ones a
-  saved wallpaper no longer uses), `read_sidecar` (reopening), `set_wallpaper` (only files in
+  saved wallpaper no longer uses), `read_sidecar` (reopening), `save_session` / `read_session`
+  (the last photo and settings, see above), `set_wallpaper` (only files in
   `~/Pictures/Wallpapers` or the theme backgrounds), `add_to_theme_backgrounds`, `theme_colors`.
   The capability grants exactly these plus drag-and-drop events and the open dialog; no fs or
   shell plugin, no `core:default`.

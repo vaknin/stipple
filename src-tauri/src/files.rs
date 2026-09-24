@@ -1,5 +1,5 @@
 //! Reading source photos and writing wallpapers. Every write creates a new file: nothing is ever
-//! overwritten except a wallpaper's own sidecar and dot field.
+//! overwritten except a wallpaper's own sidecar and dot field, and the app's session file.
 //!
 //! A wallpaper `<dir>/<stem>.png` has its settings in `<dir>/<stem>.stipple.json` and, for Dots, its
 //! dot field (for the animated wallpaper) in `<dir>/.stipple/<stem>/field.png`: hidden, so
@@ -245,6 +245,44 @@ pub fn read_sidecar(png: &Path) -> Result<Option<String>, String> {
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Largest session file: settings only, no grid.
+pub const MAX_SESSION: usize = 1024 * 1024;
+
+/// `$XDG_STATE_HOME/stipple/session.json` (`~/.local/state/stipple/session.json` by default): the
+/// photo and settings the app was last left with, to resume there.
+pub fn session_path() -> Result<PathBuf, String> {
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute());
+    Ok(match state {
+        Some(dir) => dir,
+        None => home()?.join(".local/state"),
+    }
+    .join("stipple/session.json"))
+}
+
+/// Replace the session file (atomically: a crash never leaves half of one).
+pub fn save_session(path: &Path, json: &str) -> Result<(), String> {
+    if json.len() > MAX_SESSION {
+        return Err("the session is larger than 1 MB".into());
+    }
+    serde_json::from_str::<serde_json::Value>(json).map_err(|e| format!("invalid JSON: {e}"))?;
+    write_atomic(path, json.as_bytes())
+}
+
+/// The session file, if there is one.
+pub fn read_session(path: &Path) -> Result<Option<String>, String> {
+    match fs::metadata(path) {
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+        Ok(m) if m.len() > MAX_SESSION as u64 => return Err(format!("{} is larger than 1 MB", path.display())),
+        Ok(_) => {}
+    }
+    fs::read_to_string(path)
+        .map(Some)
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// Encode an RGB dot field (3 bytes per dot, row-major) as a PNG: 8 bits, no colour profile, so
 /// the plugin's shader reads back exactly these bytes.
 pub fn encode_field(size: (u32, u32), rgb: &[u8]) -> Result<Vec<u8>, String> {
@@ -359,6 +397,23 @@ pub fn settable(path: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_round_trip() {
+        let d = tmp("session");
+        let path = d.join("stipple/session.json");
+        assert_eq!(read_session(&path).unwrap(), None);
+        save_session(&path, r#"{"a":1}"#).unwrap();
+        assert_eq!(read_session(&path).unwrap().as_deref(), Some(r#"{"a":1}"#));
+        save_session(&path, r#"{"a":2}"#).unwrap();
+        assert_eq!(read_session(&path).unwrap().as_deref(), Some(r#"{"a":2}"#));
+        assert!(save_session(&path, "{not json").is_err());
+        assert!(save_session(&path, &format!(r#""{}""#, "x".repeat(MAX_SESSION))).is_err());
+        // a failed write leaves the last session and no temporary file
+        assert_eq!(read_session(&path).unwrap().as_deref(), Some(r#"{"a":2}"#));
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+        let _ = fs::remove_dir_all(&d);
+    }
 
     fn tmp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("stipple-test-{}-{name}", std::process::id()));
