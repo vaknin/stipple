@@ -1,11 +1,11 @@
-# Typist Wall
+# Stipple
 
 Turn a photo into a text-art wallpaper (Braille dots, letters or blocks) and set it as the
 Omarchy background in one click. The art is made by the [Typist](https://github.com/winchxyz/typist)
 engine (vendored in `src/lib/typist`, MIT), laid out at exactly your monitor's resolution.
 
 Omarchy's background renderer always crops to fill the screen, so a square picture loses a big
-part of its height on a 16:9 screen. Typist Wall draws the wallpaper at exactly the output size
+part of its height on a 16:9 screen. Stipple draws the wallpaper at exactly the output size
 instead, with the art fitted (or filled) and the rest in the paper colour, so nothing is cropped.
 
 ## Use
@@ -22,8 +22,8 @@ instead, with the art fitted (or filled) and the rest in the paper colour, so no
    - **Wallpaper**: output size (your monitors from Hyprland, or any W × H), Fit or Fill, Margin,
      **Crop to screen aspect**, Ink and Paper colours ("Invert rule" or the current Omarchy theme's
      colours).
-3. **Save** (`S`) writes `~/Pictures/Wallpapers/<photo>-typist-<W>x<H>.png` (never overwriting:
-   `-2`, `-3`… on collision) and a `.typist.json` next to it.
+3. **Save** (`S`) writes `~/Pictures/Wallpapers/<photo>-stipple-<W>x<H>.png` (never overwriting:
+   `-2`, `-3`… on collision) and a `.stipple.json` next to it.
    **Set as wallpaper** saves if needed and runs `omarchy theme bg set`, then checks that
    `omarchy theme bg current` names the new file.
 
@@ -45,7 +45,7 @@ joins that theme's rotation.
 
 - **PNG** is what Omarchy can set today and what `omarchy theme bg next` rotates through
   (jpg, jpeg, png, gif, bmp, webp). It is lossless, so the dots stay crisp.
-- **`<name>.typist.json`** keeps everything a later version needs to redraw the art without the
+- **`<name>.stipple.json`** keeps everything a later version needs to redraw the art without the
   photo: the grid (mode, cols, rows, one code point per cell as `lines` and `cp`, per-cell `fg` /
   `bg` for colour blocks), every Typist setting (look, style, dither, tone, crop: with Crop to
   screen aspect on, `crop.aspect` is the width / height it was cropped at), the wallpaper options,
@@ -125,9 +125,9 @@ bun tauri build --no-bundle
 Install for the Omarchy launcher:
 
 ```sh
-install -Dm755 src-tauri/target/release/typist-wall ~/.local/bin/typist-wall
-install -Dm644 src-tauri/icons/128x128@2x.png ~/.local/share/icons/hicolor/256x256/apps/typist-wall.png
-install -Dm644 assets/typist-wall.desktop ~/.local/share/applications/typist-wall.desktop
+install -Dm755 src-tauri/target/release/stipple ~/.local/bin/stipple
+install -Dm644 src-tauri/icons/128x128@2x.png ~/.local/share/icons/hicolor/256x256/apps/stipple.png
+install -Dm644 assets/stipple.desktop ~/.local/share/applications/stipple.desktop
 ```
 
 **Dev bridge**: in `bun tauri dev` only, `dev/tw.sh 'return TW.app.doc'` runs a snippet in the app
@@ -162,6 +162,6 @@ Not in v1. What is known:
 - A moving wallpaper therefore needs its own renderer on the background layer, not
   `omarchy theme bg set`: a user shell plugin under `~/.config/omarchy/plugins/`, or a separate
   layer-shell process (for example a small Rust client drawing the grid).
-- The `.typist.json` sidecar is the input such a renderer needs: the grid, its layout and colours,
+- The `.stipple.json` sidecar is the input such a renderer needs: the grid, its layout and colours,
   and the settings to re-run the engine (characters that change over time, a slow drift of the
   tone, a re-crop).

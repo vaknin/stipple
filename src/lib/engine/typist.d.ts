@@ -22,7 +22,7 @@ declare module '$typist/tone.js' {
 
   /**
    * The crop: centre in normalised photo coords, zoom (1 = the largest such crop on the photo),
-   * clockwise degrees, and (Typist Wall) aspect = width / height, missing = 1, the square.
+   * clockwise degrees, and (Stipple) aspect = width / height, missing = 1, the square.
    */
   export interface Crop { x: number; y: number; zoom: number; rotation: number; aspect?: number }
   export const CROP_DEFAULTS: Readonly<Crop>;

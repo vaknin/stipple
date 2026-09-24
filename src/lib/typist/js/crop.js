@@ -1,5 +1,5 @@
 // The square crop frame (the Crop screen): the whole photo, dimmed, with a fixed square cut out of
-// it (Typist Wall patch: or a rectangle of the crop's `aspect`, width / height). One finger / the
+// it (Stipple patch: or a rectangle of the crop's `aspect`, width / height). One finger / the
 // mouse moves the photo under the frame, two fingers pinch-zoom and turn it, the wheel zooms at the
 // cursor. Lifted from Spiralist's framing code (app.js) into a module.
 //
@@ -7,7 +7,7 @@
 //   crop.x, crop.y   frame centre in normalised image coords (clamped -0.5..1.5)
 //   crop.zoom        1 = the frame side equals the photo's short side (0.5..6, logarithmic)
 //   crop.rotation    clockwise degrees, [-180, 180)
-//   crop.aspect      (Typist Wall) frame width / height; missing = 1, the square. Zoom 1 is then the
+//   crop.aspect      (Stipple) frame width / height; missing = 1, the square. Zoom 1 is then the
 //                    largest rectangle of that aspect on the photo (tone.js cropSize)
 // Screen mapping (CSS px): screen = F + k * R(rotation) * (P - C), k = frameH * zoom / min(w / aspect, h),
 // the inverse of sampleDecoded's "inverse of a clockwise rotation about the crop centre".
@@ -47,7 +47,7 @@ export function cleanCrop(c) {
     y: clamp(n(o.y, d.y), PAN_MIN, PAN_MAX),
     zoom: clamp(n(o.zoom, d.zoom), ZOOM_MIN, ZOOM_MAX),
     rotation: normDeg(n(o.rotation, d.rotation)),
-    // Typist Wall patch: a non-square crop keeps its aspect (see tone.js cropSize)
+    // Stipple patch: a non-square crop keeps its aspect (see tone.js cropSize)
     ...(cropAspect(o) !== 1 ? { aspect: cropAspect(o) } : {}),
   };
 }
@@ -57,7 +57,7 @@ export function fitCropFor(crop, w = 1, h = 1) {
   const [c, s] = cosSin(crop.rotation || 0);
   // a square of side a turned by r spans a * (|cos r| + |sin r|) on both axes
   let zoom = clamp(Math.abs(c) + Math.abs(s), 1, ZOOM_MAX);
-  // Typist Wall patch: a rectangle of height t and aspect a turned by r spans t * (a|cos| + |sin|)
+  // Stipple patch: a rectangle of height t and aspect a turned by r spans t * (a|cos| + |sin|)
   // by t * (a|sin| + |cos|); zoom 1 is t = min(w / a, h)
   const a = cropAspect(crop);
   if (a !== 1) {
@@ -70,7 +70,7 @@ export function fitCropFor(crop, w = 1, h = 1) {
 const r5 = v => Math.round(v * 1e5) / 1e5;
 const snapshot = c => ({ x: r5(c.x), y: r5(c.y), zoom: r5(c.zoom), rotation: Math.round(c.rotation * 100) / 100,
   ...(c.aspect ? { aspect: c.aspect } : {}) });
-// Typist Wall patch: the aspect is part of the key
+// Stipple patch: the aspect is part of the key
 const keyOf = c => { const s = snapshot(c); return `${s.x},${s.y},${s.zoom},${s.rotation},${s.aspect || 1}`; };
 
 const ICON_ROTATE = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></svg>';
@@ -182,7 +182,7 @@ export function createCropper({
     const W = canvas.clientWidth, H = canvas.clientHeight;
     const dpr = window.devicePixelRatio || 1;
     const pad = W < 480 ? 16 : 24;
-    // Typist Wall patch: the frame has the crop's aspect (square by default); size is its height
+    // Stipple patch: the frame has the crop's aspect (square by default); size is its height
     const a = cropAspect(crop);
     const side = Math.max(24, Math.floor(Math.min((W - 2 * pad) / a, H - 2 * pad) * dpr) / dpr);
     const fw = Math.max(24, Math.floor(side * a * dpr) / dpr);
@@ -470,7 +470,7 @@ export function createCropper({
     if (k === 'Enter') exit(true);
     else if (k === 'Escape') exit(false);
     else if (k.startsWith('Arrow')) {
-      // Typist Wall patch: a share of the frame's short side (its height for a square or wide frame)
+      // Stipple patch: a share of the frame's short side (its height for a square or wide frame)
       const step = (e.shiftKey ? 0.1 : 0.02) * Math.min(f.w, f.size);
       // arrows move the frame over the photo (the photo goes the other way)
       pan(k === 'ArrowLeft' ? step : k === 'ArrowRight' ? -step : 0, k === 'ArrowUp' ? step : k === 'ArrowDown' ? -step : 0);

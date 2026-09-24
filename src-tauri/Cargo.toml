@@ -1,5 +1,5 @@
 [package]
-name = "typist-wall"
+name = "stipple"
 version = "0.1.0"
 description = "Turn a photo into a text-art wallpaper for Omarchy, with the Typist engine"
 authors = ["kivan"]
@@ -8,7 +8,7 @@ edition = "2024"
 rust-version = "1.95"
 
 [lib]
-name = "typist_wall_lib"
+name = "stipple_lib"
 
 [build-dependencies]
 tauri-build = { version = "3.0.0-alpha.1", features = [] }

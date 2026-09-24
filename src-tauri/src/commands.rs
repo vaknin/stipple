@@ -37,7 +37,7 @@ pub async fn save_png(request: Request<'_>) -> Result<String, String> {
     Ok(path.display().to_string())
 }
 
-/// `<png stem>.typist.json` next to a saved wallpaper: the grid and every setting.
+/// `<png stem>.stipple.json` next to a saved wallpaper: the grid and every setting.
 #[tauri::command]
 pub async fn save_sidecar(png_path: String, json: String) -> Result<String, String> {
     let path = files::save_sidecar(&files::wallpapers_dir()?, &PathBuf::from(png_path), &json)?;

@@ -140,7 +140,7 @@ export function circleWeights(w, h, k = w * h > 4096 ? 1 : 6) {
 }
 
 /** Area-average resample of a lightness grid (box filter; also fine for mild upsampling). */
-// Typist Wall patch: the per-axis taps are built once per (n, n2) as flat typed arrays instead of
+// Stipple patch: the per-axis taps are built once per (n, n2) as flat typed arrays instead of
 // nested arrays on every call (ASCII resamples ~1.4 M samples per conversion at 150 columns). Same
 // taps, same summation order: bit-identical output.
 const axisCache = new Map();
@@ -324,7 +324,7 @@ export function levelsOf(L) {
  */
 export function asciiCells(L, W, H, cols, rows, { method = 'shape', ramp = RAMP, contrast = 1, tune = null } = {}) {
   const [SX, SY] = ASCII_SUB;
-  // Typist Wall patch: when the grid is a whole number of samples per cell (the converter samples
+  // Stipple patch: when the grid is a whole number of samples per cell (the converter samples
   // 4 x 8), the resample to 8 x 17 is folded into the circle weights (both are linear), instead
   // of building a 1.4 M-sample raster per conversion. Equal up to float rounding.
   const folded = method !== 'ramp' && (W !== cols * SX || H !== rows * SY) && W % cols === 0 && H % rows === 0;

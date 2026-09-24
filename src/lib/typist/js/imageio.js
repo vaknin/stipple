@@ -149,7 +149,7 @@ export function fromDrawable(drawable, name = 'image') {
 
 /** Initial framing: cover-fit the circle; portraits bias upward (faces live in the upper half);
  *  cut-outs (transparent PNGs) frame their opaque bounding box plus a margin. */
-// Typist Wall patch: `aspect` (crop width / height, default 1 = upstream's square) frames the box
+// Stipple patch: `aspect` (crop width / height, default 1 = upstream's square) frames the box
 // and biases portraits for a rectangular crop (tone.js cropSize). The result carries no aspect.
 export function autoCrop(img, aspect = 1) {
   const { width: w, height: h, alphaBox } = img;

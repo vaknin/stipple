@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
-Name=Typist Wall
+Name=Stipple
 GenericName=Text-art wallpaper
 Comment=Turn a photo into a Braille, letter or block wallpaper for Omarchy
-Exec=typist-wall
-Icon=typist-wall
+Exec=stipple
+Icon=stipple
 Terminal=false
 Categories=Graphics;
 Keywords=wallpaper;background;ascii;braille;typist;
-StartupWMClass=typist-wall
+StartupWMClass=stipple

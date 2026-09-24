@@ -117,7 +117,7 @@ fn write_all(path: &Path, mut f: File, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// Save a rendered wallpaper as `<dir>/<stem>-typist-<W>x<H>.png` (suffixed on collision). The
+/// Save a rendered wallpaper as `<dir>/<stem>-stipple-<W>x<H>.png` (suffixed on collision). The
 /// bytes must be a PNG of exactly `size`.
 pub fn save_png(dir: &Path, stem: &str, size: (u32, u32), bytes: &[u8]) -> Result<PathBuf, String> {
     if bytes.len() > MAX_PNG {
@@ -130,7 +130,7 @@ pub fn save_png(dir: &Path, stem: &str, size: (u32, u32), bytes: &[u8]) -> Resul
         }
         Some(_) => {}
     }
-    let base = format!("{}-typist-{}x{}", sanitize_stem(stem), size.0, size.1);
+    let base = format!("{}-stipple-{}x{}", sanitize_stem(stem), size.0, size.1);
     let (path, f) = create_unique(dir, &base, ".png")?;
     write_all(&path, f, bytes)?;
     Ok(path)
@@ -146,7 +146,7 @@ pub fn inside(dir: &Path, path: &Path) -> Result<PathBuf, String> {
     Ok(p)
 }
 
-/// Write `<png stem>.typist.json` next to a saved wallpaper. The JSON must parse.
+/// Write `<png stem>.stipple.json` next to a saved wallpaper. The JSON must parse.
 pub fn save_sidecar(dir: &Path, png: &Path, json: &str) -> Result<PathBuf, String> {
     let png = inside(dir, png)?;
     if ext_of(&png).as_deref() != Some("png") {
@@ -157,7 +157,7 @@ pub fn save_sidecar(dir: &Path, png: &Path, json: &str) -> Result<PathBuf, Strin
     }
     serde_json::from_str::<serde_json::Value>(json).map_err(|e| format!("invalid JSON: {e}"))?;
     let stem = png.file_stem().and_then(|s| s.to_str()).ok_or("bad file name")?;
-    let path = png.with_file_name(format!("{stem}.typist.json"));
+    let path = png.with_file_name(format!("{stem}.stipple.json"));
     fs::write(&path, json).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(path)
 }
@@ -194,7 +194,7 @@ mod tests {
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("typist-wall-test-{}-{name}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("stipple-test-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
@@ -231,22 +231,22 @@ mod tests {
         let a = save_png(&d, "cat", (1920, 1080), &png(1920, 1080)).unwrap();
         let b = save_png(&d, "cat", (1920, 1080), &png(1920, 1080)).unwrap();
         let c = save_png(&d, "cat", (1920, 1080), &png(1920, 1080)).unwrap();
-        assert_eq!(a.file_name().unwrap(), "cat-typist-1920x1080.png");
-        assert_eq!(b.file_name().unwrap(), "cat-typist-1920x1080-2.png");
-        assert_eq!(c.file_name().unwrap(), "cat-typist-1920x1080-3.png");
+        assert_eq!(a.file_name().unwrap(), "cat-stipple-1920x1080.png");
+        assert_eq!(b.file_name().unwrap(), "cat-stipple-1920x1080-2.png");
+        assert_eq!(c.file_name().unwrap(), "cat-stipple-1920x1080-3.png");
         assert!(save_png(&d, "cat", (1920, 1080), &png(1920, 1079)).is_err());
         assert!(save_png(&d, "cat", (1920, 1080), b"not a png at all, not at all").is_err());
 
         let s = save_sidecar(&d, &b, "{\"v\":1}").unwrap();
-        assert_eq!(s.file_name().unwrap(), "cat-typist-1920x1080-2.typist.json");
+        assert_eq!(s.file_name().unwrap(), "cat-stipple-1920x1080-2.stipple.json");
         assert!(save_sidecar(&d, &b, "{nope").is_err());
         assert!(save_sidecar(&d, Path::new("/etc/hostname"), "{}").is_err());
 
         let other = tmp("copy");
         let c1 = copy_unique(&a, &other).unwrap();
         let c2 = copy_unique(&a, &other).unwrap();
-        assert_eq!(c1.file_name().unwrap(), "cat-typist-1920x1080.png");
-        assert_eq!(c2.file_name().unwrap(), "cat-typist-1920x1080-2.png");
+        assert_eq!(c1.file_name().unwrap(), "cat-stipple-1920x1080.png");
+        assert_eq!(c2.file_name().unwrap(), "cat-stipple-1920x1080-2.png");
         let _ = fs::remove_dir_all(&d);
         let _ = fs::remove_dir_all(&other);
     }

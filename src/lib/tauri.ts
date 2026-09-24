@@ -39,7 +39,7 @@ export const monitors = () => invoke<Monitor[]>('monitors');
 
 export const readFile = (path: string) => invoke<ArrayBuffer>('read_file', { path });
 
-/** Saves ~/Pictures/Wallpapers/<stem>-typist-<W>x<H>.png (suffixed on collision); the path back. */
+/** Saves ~/Pictures/Wallpapers/<stem>-stipple-<W>x<H>.png (suffixed on collision); the path back. */
 export const savePng = (png: Uint8Array, stem: string, width: number, height: number) =>
   invoke<string>('save_png', png, {
     headers: { 'x-stem': encodeURIComponent(stem), 'x-size': `${width}x${height}` },

@@ -1,4 +1,4 @@
-//! Typist Wall: photo -> text-art wallpaper for Omarchy. The art is made in the webview by the
+//! Stipple: photo -> text-art wallpaper for Omarchy. The art is made in the webview by the
 //! vendored Typist engine; this side reads photos, writes wallpapers and talks to Hyprland and
 //! Omarchy.
 
@@ -22,5 +22,5 @@ pub fn run() {
             commands::theme_colors,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Typist Wall");
+        .expect("error while running Stipple");
 }

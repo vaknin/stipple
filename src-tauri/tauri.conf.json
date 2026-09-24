@@ -1,9 +1,9 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Typist Wall",
-  "mainBinaryName": "typist-wall",
+  "productName": "Stipple",
+  "mainBinaryName": "stipple",
   "version": "0.1.0",
-  "identifier": "dev.kivan.typist-wall",
+  "identifier": "dev.kivan.stipple",
   "build": {
     "frontendDist": "../build",
     "devUrl": "http://localhost:5173",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Typist Wall",
+        "title": "Stipple",
         "width": 1100,
         "height": 720,
         "minWidth": 760,

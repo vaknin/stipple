@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    typist_wall_lib::run();
+    stipple_lib::run();
 }

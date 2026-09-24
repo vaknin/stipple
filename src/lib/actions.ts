@@ -1,7 +1,7 @@
 // Save, Set as wallpaper, Add to theme backgrounds.
 //
-// Output: ~/Pictures/Wallpapers/<photo>-typist-<W>x<H>.png (never overwritten; -2, -3… on
-// collision) plus <same name>.typist.json, the grid and every setting, so a later renderer (an
+// Output: ~/Pictures/Wallpapers/<photo>-stipple-<W>x<H>.png (never overwritten; -2, -3… on
+// collision) plus <same name>.stipple.json, the grid and every setting, so a later renderer (an
 // animated one, an SVG export) can redraw or re-characterise the art without the photo.
 
 import { gridLines, type Grid } from '$typist/convert.js';
@@ -26,9 +26,9 @@ function sidecar(grid: Grid, snap: Snapshot, colours: Colours, pngPath: string, 
   const loaded = app.loaded!;
   const { width, height } = snap.wall;
   return {
-    format: 'typist-wall/1',
+    format: 'stipple/1',
     created: new Date().toISOString(),
-    app: { name: 'Typist Wall', version: APP_VERSION },
+    app: { name: 'Stipple', version: APP_VERSION },
     engine: ENGINE,
     source: {
       path: loaded.path,

@@ -12,11 +12,11 @@ js/        tone, convert, dither, blocks, ascii, shape-vectors, raster, export, 
            history, targets, count from upstream js/. Unchanged except the patches below.
            targets.js and count.js are kept whole only because export.js (and its test) import
            them; the app calls only targets.cellAspect / rowsFor.
-tests/     ascii, convert, export and fuzz .test.mjs, unchanged, plus aspect.test.mjs (Typist Wall's
+tests/     ascii, convert, export and fuzz .test.mjs, unchanged, plus aspect.test.mjs (Stipple's
            own, for the crop aspect below). Run them with `bun run test:engine` (node --test; bun
            test does not report these plain assert scripts correctly).
 
-Local changes (each marked "Typist Wall patch" in the source)
+Local changes (each marked "Stipple patch" in the source)
 -------------------------------------------------------------
 js/ui.js       Trimmed to paintRange() and announce(), copied verbatim from upstream ui.js
                (lines 6-10 and 222-228), because crop.js imports them. The rest of ui.js is DOM

@@ -40,7 +40,7 @@ export const CROP_DEFAULTS = Object.freeze({
 
 const clamp01 = v => (v < 0 ? 0 : v > 1 ? 1 : v);
 
-// Typist Wall patch: the stages of each look that do not depend on the brightness / contrast /
+// Stipple patch: the stages of each look that do not depend on the brightness / contrast /
 // gamma (and, where possible, detail / edges) sliders are memoised per sampled grid, so a slider
 // drag redoes only the cheap curve at the end. Same operations in the same order: the output is
 // bit-identical to upstream. Entries are keyed on the sample object (the converter caches those)
@@ -63,7 +63,7 @@ export function cropSide(width, height, crop) {
   return Math.min(width, height) / Math.max(0.05, (crop && crop.zoom) || 1);
 }
 
-// Typist Wall patch: a crop may carry `aspect` (width / height; missing or 1 = upstream's square).
+// Stipple patch: a crop may carry `aspect` (width / height; missing or 1 = upstream's square).
 // At zoom 1 it is the largest rectangle of that aspect on the photo, as the square is.
 /** The crop's aspect (1 unless a valid positive number is set). */
 export function cropAspect(crop) {
@@ -832,7 +832,7 @@ function localMinMax(V, W, H, r) {
   return [mn, mx];
 }
 
-// Typist Wall patch: everything in the photo look that depends only on the sample, auto levels and
+// Stipple patch: everything in the photo look that depends only on the sample, auto levels and
 // invert, memoised (see memo); tonePhoto below is upstream's body from the detail gain on.
 function photoAnalysis(img, t) {
   return memo(img, `photo|${t.auto ? 1 : 0}|${t.invert ? 1 : 0}`, () => {
@@ -1079,7 +1079,7 @@ function toneTexture(img, t, { target, boost, stretch }) {
   const cw = centreWeights(W, H);
   const long = Math.max(W, H);
   const rFine = boxRadiusForSigma(Math.max(1, 0.02 * long));
-  // Typist Wall patch: levels, the activity mask and CLAHE depend on the sample and auto levels
+  // Stipple patch: levels, the activity mask and CLAHE depend on the sample and auto levels
   // only; the detail-dependent blend and sharpening on detail too (see memo)
   const pre = memo(img, `texture|${t.auto ? 1 : 0}|${stretch}`, () => {
   const out = new Float32Array(N);
@@ -1203,7 +1203,7 @@ export function xdogLines(base, W, H, o = SKETCH) {
   return xdogFrom(xdogBlurs(base, W, H, o), W, H, o);
 }
 
-// Typist Wall patch: the two Gaussians depend only on the base (memoised by toneSketch), the
+// Stipple patch: the two Gaussians depend only on the base (memoised by toneSketch), the
 // threshold and cleanup on the sliders.
 function xdogBlurs(base, W, H, o) {
   const N = W * H;
@@ -1350,7 +1350,7 @@ function tonePoster(img, t, { stretch }) {
   const { W, H } = img, N = W * H;
   const wts = centreWeights(W, H);
   const out = new Float32Array(N);
-  // Typist Wall patch: levels, the denoise and the unsharp base memoised (see memo)
+  // Stipple patch: levels, the denoise and the unsharp base memoised (see memo)
   const pre = memo(img, `poster|${t.auto ? 1 : 0}|${stretch}`, () => {
     const o = new Float32Array(N);
     const [a, b] = levelled(img, t, wts, stretch, o);

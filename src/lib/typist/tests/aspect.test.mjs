@@ -1,4 +1,4 @@
-// Typist Wall: the crop's `aspect` (tone.js cropSize, crop.js, imageio.js autoCrop). A square crop
+// Stipple: the crop's `aspect` (tone.js cropSize, crop.js, imageio.js autoCrop). A square crop
 // (aspect missing or 1) must stay exactly upstream's.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';

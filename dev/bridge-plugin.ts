@@ -49,7 +49,7 @@ export function devBridge(): Plugin {
   };
 
   return {
-    name: 'typist-wall-dev-bridge',
+    name: 'stipple-dev-bridge',
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use('/__bridge', async (req, res) => {

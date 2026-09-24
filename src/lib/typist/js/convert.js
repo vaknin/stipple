@@ -8,7 +8,7 @@ import { labGrid, blocksHalf, blocksQuad, blocksMono } from './blocks.js';
 
 export { DITHERS, TONE_DEFAULTS, CROP_DEFAULTS, LOOKS };
 
-// Typist Wall patch: a static import. Upstream loaded ascii.js with a top-level
+// Stipple patch: a static import. Upstream loaded ascii.js with a top-level
 // `await import()` so the app kept working while ascii.js was being written; that top-level await
 // made every importer's module graph async, which broke SvelteKit's page loading in WebKitGTK.
 // ascii.js always ships here, so the fallback is not needed.
@@ -100,7 +100,7 @@ export function createConverter() {
     const colorBlocks = o.mode === 'blocks' && !!o.color;
     const [W, H] = sampleSize(o);
 
-    // Typist Wall patch: the crop's aspect is part of the sample (see tone.js cropSize)
+    // Stipple patch: the crop's aspect is part of the sample (see tone.js cropSize)
     const sKey = `${c.x},${c.y},${c.zoom},${c.rotation},${c.aspect || 1}|${W}x${H}|${colorBlocks ? 1 : 0}`;
     let img = samples.get(sKey);
     if (!img) {

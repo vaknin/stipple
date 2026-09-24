@@ -160,8 +160,8 @@ mod tests {
 
     #[test]
     fn pretty_names_match_the_script() {
-        assert_eq!(pretty_name("cat-typist-1920x1080.png"), "Cat Typist 1920x1080");
-        assert_eq!(pretty_name("cat-typist-1920x1080-2.png"), "Cat Typist 1920x1080 2");
+        assert_eq!(pretty_name("cat-stipple-1920x1080.png"), "Cat Stipple 1920x1080");
+        assert_eq!(pretty_name("cat-stipple-1920x1080-2.png"), "Cat Stipple 1920x1080 2");
         assert_eq!(pretty_name("cat-16x9.png"), "Cat 16x9");
         assert_eq!(
             pretty_name("01_blonde-swordswoman-black.jpg"),
