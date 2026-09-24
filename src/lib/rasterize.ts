@@ -276,7 +276,16 @@ export interface RasterOpts {
 export function rasterize(s: Surface, grid: Grid, layout: Layout, colours: Colours, o: RasterOpts): ImageData {
   const W = s.width, H = s.height;
   const paper = word(...rgb(colours.paper));
-  s.px.fill(paper);
+  const surround = colours.surround ? word(...rgb(colours.surround)) : paper;
+  s.px.fill(surround);
+  if (surround !== paper) {
+    // paper only inside the art's rectangle (the margin or the box stays surround)
+    const r = layout.inner;
+    const ix0 = Math.max(0, Math.floor(r.x)), ix1 = Math.min(W, Math.ceil(r.x + r.w));
+    for (let yy = Math.max(0, Math.floor(r.y)), y1 = Math.min(H, Math.ceil(r.y + r.h)); yy < y1; yy++) {
+      if (ix1 > ix0) s.px.fill(paper, yy * W + ix0, yy * W + ix1);
+    }
+  }
   const c = layout.clip;
   const rg: Region = {
     x0: Math.max(0, c ? Math.floor(c.x) : 0),

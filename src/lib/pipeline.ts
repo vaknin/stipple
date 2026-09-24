@@ -106,10 +106,10 @@ export async function currentGrid() {
 }
 
 /** Where `g` goes on a width x height canvas with the given (default: current) wall options. */
-export function layoutFor(g: Grid, width: number, height: number, wall: Pick<Wall, 'marginPct' | 'placement'> = app.wall): Layout {
+export function layoutFor(g: Grid, width: number, height: number, wall: Pick<Wall, 'marginPct' | 'placement' | 'box'> = app.wall): Layout {
   return layoutArt(
     { cols: g.cols, rows: g.rows, cellAspect: cellAspect(g.mode) },
-    { width, height, marginPct: wall.marginPct, placement: wall.placement },
+    { width, height, marginPct: wall.marginPct, placement: wall.placement, box: wall.box },
   );
 }
 
@@ -120,7 +120,7 @@ export function drawPreview() {
   if (!ctx) return;
   const layout = layoutFor(g, c.width, c.height);
   const t0 = performance.now();
-  if (app.peeking) drawPhotoCrop(ctx, loaded.photo.canvas, app.crop, layout, app.colours.paper, c.width, c.height);
+  if (app.peeking) drawPhotoCrop(ctx, loaded.photo.canvas, app.crop, layout, app.colours.paper, c.width, c.height, app.colours.surround);
   else renderWallpaper(ctx, g, layout, app.colours, previewSurface(c.width, c.height));
   perf.add('draw', performance.now() - t0);
 }

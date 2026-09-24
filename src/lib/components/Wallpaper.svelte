@@ -1,6 +1,6 @@
 <script lang="ts">
   import { fileColours } from '../engine/engine';
-  import { MARGIN_MAX, type Placement } from '../layout';
+  import { boxPx, clampBox, MARGIN_MAX, type Box, type Placement } from '../layout';
   import { luminance } from '../render';
   import { app } from '../state.svelte';
   import Icon from './Icon.svelte';
@@ -26,8 +26,39 @@
     else setSize(w.width, c);
   }
 
+  // ---- the art's box: stored as fractions of the screen, edited in pixels
+  const boxRect = $derived(w.box ? boxPx(w.box, w.width, w.height) : null);
+
+  function setBox(b: Box | null, label: string) {
+    app.wall.box = b ? clampBox(b, 16 / Math.min(w.width, w.height)) : null;
+    app.commit(label);
+  }
+
+  function useBox(on: boolean) {
+    if (on === !!w.box) return;
+    setBox(on ? { x: 0.25, y: 0.25, w: 0.5, h: 0.5 } : null, on ? 'Art box' : 'Whole screen');
+  }
+
+  /** A pixel field of the box: size keeps the centre, position moves the top-left. */
+  function boxField(which: 'w' | 'h' | 'x' | 'y', raw: string) {
+    const b = w.box, r = boxRect;
+    const v = Math.round(Number(raw));
+    if (!b || !r || !Number.isFinite(v)) return;
+    const W = w.width, H = w.height;
+    if (which === 'w') setBox({ ...b, w: v / W, x: b.x + (b.w - v / W) / 2 }, 'Art box size');
+    else if (which === 'h') setBox({ ...b, h: v / H, y: b.y + (b.h - v / H) / 2 }, 'Art box size');
+    else if (which === 'x') setBox({ ...b, x: v / W }, 'Move art');
+    else setBox({ ...b, y: v / H }, 'Move art');
+  }
+
+  function centreBox() {
+    const b = w.box;
+    if (b) setBox({ ...b, x: (1 - b.w) / 2, y: (1 - b.h) / 2 }, 'Centre art');
+  }
+
   const rule = $derived(fileColours(app.doc.tone.invert));
   const custom = $derived(w.ink != null || w.paper != null);
+  const customSurround = $derived(w.surround != null && w.surround !== app.colours.paper);
   // ink lighter than paper without invert (or darker with it) draws a negative of the photo
   const negative = $derived.by(() => {
     if (app.colourBlocks) return false;
@@ -91,6 +122,47 @@
 </div>
 
 <div class="field">
+  <div class="label">Art area</div>
+  <Seg
+    label="Art area"
+    value={w.box ? 'box' : 'screen'}
+    options={[
+      { value: 'screen', label: 'Whole screen', hint: 'The art uses the screen inside the margin' },
+      { value: 'box', label: 'Box', hint: 'The art sits in a box you size and place; the surround colour is around it' },
+    ]}
+    onpick={v => useBox(v === 'box')}
+  />
+  {#if w.box && boxRect}
+    <div class="grid2">
+      <label class="lf">
+        <span class="dim">Size</span>
+        <span class="wh">
+          <input type="number" aria-label="Box width in pixels" min="16" max={w.width} value={boxRect.w}
+            onchange={e => boxField('w', e.currentTarget.value)} />
+          <span class="dim">×</span>
+          <input type="number" aria-label="Box height in pixels" min="16" max={w.height} value={boxRect.h}
+            onchange={e => boxField('h', e.currentTarget.value)} />
+        </span>
+      </label>
+      <label class="lf">
+        <span class="dim">Position</span>
+        <span class="wh">
+          <input type="number" aria-label="Box left edge in pixels" min="0" max={w.width - boxRect.w} value={boxRect.x}
+            onchange={e => boxField('x', e.currentTarget.value)} />
+          <span class="dim">,</span>
+          <input type="number" aria-label="Box top edge in pixels" min="0" max={w.height - boxRect.h} value={boxRect.y}
+            onchange={e => boxField('y', e.currentTarget.value)} />
+        </span>
+      </label>
+    </div>
+    <div class="row">
+      <button type="button" onclick={centreBox}><Icon name="monitor" size={14} /> Centre</button>
+    </div>
+    <p class="hint">Drag the art in the preview to move it. Scroll over it to resize.</p>
+  {/if}
+</div>
+
+<div class="field">
   <div class="label">Placement</div>
   <Seg
     label="Placement"
@@ -101,6 +173,7 @@
     ] satisfies { value: Placement; label: string; hint: string }[]}
     onpick={v => { app.wall.placement = v; app.commit('Placement'); }}
   />
+  {#if !w.box}
   <Slider
     label="Margin"
     min={0}
@@ -112,11 +185,12 @@
     oninput={v => { app.wall.marginPct = v; }}
     oncommit={v => { app.wall.marginPct = v; app.commit('Margin'); }}
   />
+  {/if}
   <Switch
     label="Crop to screen aspect"
     checked={w.cropToScreen}
     disabled={app.cropping}
-    hint="Crop the photo to the screen's shape (inside the margin) so the art fills it; square when off"
+    hint={w.box ? "Crop the photo to the box's shape so the art fills it; square when off" : "Crop the photo to the screen's shape (inside the margin) so the art fills it; square when off"}
     onchange={on => app.setCropToScreen(on)}
   />
 </div>
@@ -145,6 +219,19 @@
       <span>Paper</span>
       <span class="num dim">{app.colours.paper}</span>
     </label>
+    <label class="swatch" title="Surround: outside the art's box or margin">
+      <input
+        type="color"
+        value={app.colours.surround}
+        oninput={e => { app.wall.surround = e.currentTarget.value; }}
+        onchange={e => { app.wall.surround = e.currentTarget.value; app.commit('Surround'); }}
+      />
+      <span>Surround</span>
+      <span class="num dim">{customSurround ? app.colours.surround : 'paper'}</span>
+    </label>
+    <button type="button" class="same" disabled={w.surround == null}
+      onclick={() => { app.wall.surround = null; app.commit('Surround'); }}
+      title="Use the paper colour outside the art too">Same as paper</button>
   </div>
   <div class="row">
     <button type="button" disabled={!custom} onclick={resetColours} title={`Invert ${app.doc.tone.invert ? 'on' : 'off'}: ${rule.ink} on ${rule.paper}`}>
@@ -176,6 +263,11 @@
   .dim { color: var(--text-muted); }
   .wh { display: flex; align-items: center; gap: 6px; }
   .wh input { width: 84px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .lf { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+  .lf .wh input { width: 100%; min-width: 0; }
+  .hint { margin: 0; font-size: 12px; color: var(--text-muted); }
+  .same { font-size: 12px; }
   .colours { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .swatch {
     display: grid;

@@ -2,6 +2,7 @@
   // The wallpaper at the window's size: the output's aspect, drawn in device pixels. When the
   // canvas would be as large as the output, it is the output (and CSS shrinks it).
   import { onMount, untrack } from 'svelte';
+  import { boxPx, clampBox } from '../layout';
   import { drawPreview, schedule, setPreviewCanvas } from '../pipeline';
   import { app } from '../state.svelte';
   import Icon from './Icon.svelte';
@@ -37,6 +38,60 @@
     });
   });
 
+  // ---- the art's box: drag to move it, scroll to resize it (Wallpaper > Art area > Box)
+  const boxCss = $derived.by(() => {
+    const b = app.wall.box;
+    if (!b || !app.loaded) return null;
+    const r = boxPx(b, fitted.cssW, fitted.cssH);
+    return r;
+  });
+  let drag: { px: number; py: number; x: number; y: number } | null = $state(null);
+  let hover = $state(false);
+  const minBox = () => 16 / Math.min(app.wall.width, app.wall.height);
+
+  function inBox(e: PointerEvent | WheelEvent) {
+    const r = boxCss;
+    if (!r || app.cropping) return false;
+    const c = canvas.getBoundingClientRect();
+    const x = e.clientX - c.left, y = e.clientY - c.top;
+    return x >= r.x && y >= r.y && x <= r.x + r.w && y <= r.y + r.h;
+  }
+
+  function onDown(e: PointerEvent) {
+    const b = app.wall.box;
+    if (!b || e.button !== 0 || !inBox(e)) return;
+    drag = { px: e.clientX, py: e.clientY, x: b.x, y: b.y };
+    canvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+
+  function onMove(e: PointerEvent) {
+    hover = inBox(e);
+    const b = app.wall.box;
+    if (!drag || !b) return;
+    const dx = (e.clientX - drag.px) / fitted.cssW, dy = (e.clientY - drag.py) / fitted.cssH;
+    app.wall.box = clampBox({ ...b, x: drag.x + dx, y: drag.y + dy }, minBox());
+  }
+
+  function onUp(e: PointerEvent) {
+    if (!drag) return;
+    const moved = app.wall.box && (app.wall.box.x !== drag.x || app.wall.box.y !== drag.y);
+    drag = null;
+    if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+    if (moved) app.commit('Move art');
+  }
+
+  function onWheel(e: WheelEvent) {
+    const b = app.wall.box;
+    if (!b || !inBox(e)) return;
+    e.preventDefault();
+    const k = Math.exp(-Math.sign(e.deltaY) * 0.06);
+    const nw = Math.min(1, b.w * k), nh = Math.min(1, b.h * k);
+    if (nw < minBox() || nh < minBox()) return;
+    app.wall.box = clampBox({ x: b.x + (b.w - nw) / 2, y: b.y + (b.h - nh) / 2, w: nw, h: nh }, minBox());
+    app.commit('Art box size');
+  }
+
   onMount(() => {
     setPreviewCanvas(canvas);
     const ro = new ResizeObserver(([e]) => {
@@ -66,7 +121,24 @@
     role="img"
     aria-label={app.grid ? `Wallpaper preview, ${app.grid.cols} by ${app.grid.rows} characters` : 'Wallpaper preview'}
   >
-    <canvas bind:this={canvas} class="preview-canvas" style="width: {fitted.cssW}px; height: {fitted.cssH}px"></canvas>
+    <div class="stage" style="width: {fitted.cssW}px; height: {fitted.cssH}px">
+      <canvas
+        bind:this={canvas}
+        class="preview-canvas"
+        class:movable={hover || drag}
+        style="width: {fitted.cssW}px; height: {fitted.cssH}px"
+        onpointerdown={onDown}
+        onpointermove={onMove}
+        onpointerup={onUp}
+        onpointercancel={onUp}
+        onpointerleave={() => { if (!drag) hover = false; }}
+        onwheel={onWheel}
+      ></canvas>
+      {#if boxCss && (hover || drag)}
+        <div class="box-outline" aria-hidden="true"
+          style="left: {boxCss.x}px; top: {boxCss.y}px; width: {boxCss.w}px; height: {boxCss.h}px"></div>
+      {/if}
+    </div>
   </div>
 
   {#if !app.loaded}
@@ -97,13 +169,23 @@
     background: var(--desk);
   }
   .frame { display: contents; }
+  .stage { position: relative; }
+  .movable { cursor: move; }
+  .box-outline {
+    position: absolute;
+    box-sizing: border-box;
+    border: 1px dashed var(--accent);
+    outline: 1px dashed color-mix(in srgb, var(--bg) 70%, transparent);
+    outline-offset: -2px;
+    pointer-events: none;
+  }
   canvas {
     display: block;
     box-shadow: 0 0 0 1px var(--border), 0 6px 24px rgba(0, 0, 0, 0.35);
     image-rendering: auto;
   }
   /* the wrapper is display: contents, so hide the canvas itself (out of the grid flow) */
-  .hidden canvas { visibility: hidden; position: absolute; }
+  .hidden .stage { visibility: hidden; position: absolute; }
   .empty {
     display: flex;
     flex-direction: column;

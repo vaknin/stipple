@@ -1,7 +1,7 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
 import {
-  autoColumns, COLS_MAX, COLS_MIN, innerRect, layoutArt, MARGIN_MAX, marginPx,
+  autoColumns, boxPx, clampBox, COLS_MAX, COLS_MIN, innerRect, layoutArt, MARGIN_MAX, marginPx,
   type Layout, type LayoutIn, type Placement,
 } from './layout';
 
@@ -242,5 +242,42 @@ describe('auto columns, crop to the screen aspect', () => {
     // a portrait screen: the width limits the art
     expect(autoColumns(ASPECT.braille, o(1080, 1920), 9 / 16)).toBe(125);
     expect(autoColumns(ASPECT.braille, o(7, 5), 1.4)).toBe(COLS_MIN);
+  });
+});
+
+describe('art box', () => {
+  const W = 1920, H = 1080;
+  test('a box is whole pixels of the canvas and stays on it', () => {
+    expect(boxPx({ x: 0.25, y: 0.25, w: 0.5, h: 0.5 }, W, H)).toEqual({ x: 480, y: 270, w: 960, h: 540 });
+    expect(boxPx({ x: 0.9, y: 0.9, w: 0.5, h: 0.5 }, W, H)).toEqual({ x: 960, y: 540, w: 960, h: 540 });
+    expect(clampBox({ x: -1, y: 2, w: 3, h: 0 }, 0.1)).toEqual({ x: 0, y: 0.9, w: 1, h: 0.1 });
+    expect(clampBox({ x: Number.NaN, y: 0, w: 0.5, h: 0.5 })).toEqual({ x: 0.25, y: 0, w: 0.5, h: 0.5 });
+  });
+
+  test('the box replaces the margin as the inner rectangle', () => {
+    const box = { x: 500 / W, y: 200 / H, w: 500 / W, h: 200 / H };
+    expect(innerRect({ width: W, height: H, marginPct: 10, box })).toEqual({ x: 500, y: 200, w: 500, h: 200 });
+  });
+
+  test('fit stays inside the box, fill covers it and clips to it', () => {
+    const box = { x: 0.1, y: 0.6, w: 0.26, h: 0.185 };
+    for (const g of GRIDS) {
+      const fit = layoutArt(g, { width: W, height: H, marginPct: 0, placement: 'fit', box });
+      const r = fit.inner;
+      expect(fit.x).toBeGreaterThanOrEqual(r.x);
+      expect(fit.y).toBeGreaterThanOrEqual(r.y);
+      expect(fit.x + fit.artW).toBeLessThanOrEqual(r.x + r.w + EPS);
+      expect(fit.y + fit.artH).toBeLessThanOrEqual(r.y + r.h + EPS);
+      const fill = layoutArt(g, { width: W, height: H, marginPct: 0, placement: 'fill', box });
+      expect(fill.clip).toEqual(r);
+      expect(fill.artW).toBeGreaterThanOrEqual(r.w - EPS);
+      expect(fill.artH).toBeGreaterThanOrEqual(r.h - EPS);
+    }
+  });
+
+  test('auto columns follow the box height', () => {
+    const box = { x: 0, y: 0, w: 0.5, h: 300 / H };
+    expect(autoColumns(ASPECT.braille, { width: W, height: H, marginPct: 0, placement: 'fit', box })).toBe(
+      autoColumns(ASPECT.braille, { width: 960, height: 300, marginPct: 0, placement: 'fit' }));
   });
 });

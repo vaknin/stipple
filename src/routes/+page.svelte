@@ -14,6 +14,7 @@
   import Style from '$lib/components/Style.svelte';
   import Tone from '$lib/components/Tone.svelte';
   import Wallpaper from '$lib/components/Wallpaper.svelte';
+  import { boxPx } from '$lib/layout';
   import { fontsReady, IMAGE_EXTS, openPath, schedule } from '$lib/pipeline';
   import { app } from '$lib/state.svelte';
   import { errorText, inTauri, monitors, themeColors } from '$lib/tauri';
@@ -26,6 +27,12 @@
     { id: 'wall', label: 'Wallpaper' },
   ];
   const dev = import.meta.env.DEV;
+
+  /** "500×200 box" for the status line. */
+  function boxLabel(w: typeof app.wall) {
+    const r = w.box ? boxPx(w.box, w.width, w.height) : null;
+    return r ? `${r.w}×${r.h} box` : '';
+  }
 
   // anything that changes the picture schedules one render for the next frame
   $effect(() => {
@@ -174,7 +181,7 @@
         <span>{app.grid.cols}×{app.grid.rows}</span>
         <span>{app.grid.mode === 'braille' ? 'Dots' : app.grid.mode === 'ascii' ? 'Letters' : 'Blocks'}</span>
       {/if}
-      <span>{app.wall.width}×{app.wall.height} {app.wall.placement}{app.wall.marginPct ? ` +${app.wall.marginPct}%` : ''}</span>
+      <span>{app.wall.width}×{app.wall.height} {app.wall.placement}{app.wall.box ? ` in ${boxLabel(app.wall)}` : app.wall.marginPct ? ` +${app.wall.marginPct}%` : ''}</span>
       {#if app.grid}<span class="dim">{app.runMs.toFixed(1)} ms</span>{/if}
     </footer>
   </main>

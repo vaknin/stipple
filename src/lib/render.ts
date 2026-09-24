@@ -14,7 +14,12 @@ export const FONT = MONO_STACK;
 /** Braille dot radius relative to the column pitch, as Typist exports it. */
 export const DOT_R = 0.32;
 
-export interface Colours { ink: string; paper: string }
+export interface Colours {
+  ink: string;
+  paper: string;
+  /** Outside the art's rectangle (the margin or around the box); missing = paper. */
+  surround?: string;
+}
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -29,13 +34,15 @@ export function renderWallpaper(ctx: Ctx, grid: Grid, layout: Layout, colours: C
  * see the photo".
  */
 export function drawPhotoCrop(ctx: Ctx, photo: HTMLCanvasElement, crop: Crop, layout: Layout, paper: string,
-  width: number, height: number) {
+  width: number, height: number, surround?: string) {
   const w = photo.width, h = photo.height;
   const [sw, sh] = cropSize(w, h, crop);
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = paper;
+  ctx.fillStyle = surround ?? paper;
   ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = paper;
+  ctx.fillRect(layout.inner.x, layout.inner.y, layout.inner.w, layout.inner.h);
   if (layout.clip) {
     ctx.beginPath();
     ctx.rect(layout.clip.x, layout.clip.y, layout.clip.w, layout.clip.h);

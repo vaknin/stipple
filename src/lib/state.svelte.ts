@@ -9,7 +9,7 @@ import { History } from '$typist/history.js';
 import type { Photo } from '$typist/imageio.js';
 import { CROP_DEFAULTS, cropSize, TONE_DEFAULTS, type Crop, type LookId, type Tone } from '$typist/tone.js';
 import { autoCols, cellAspect, fileColours, rowsFor } from './engine/engine';
-import { COLS_MAX, COLS_MIN, innerRect, type LayoutIn, type Placement } from './layout';
+import { COLS_MAX, COLS_MIN, innerRect, type Box, type LayoutIn, type Placement } from './layout';
 import type { Colours } from './render';
 import type { Monitor, ThemeColors } from './tauri';
 
@@ -39,6 +39,10 @@ export interface Wall {
   /** null = Typist's invert rule. */
   ink: string | null;
   paper: string | null;
+  /** The art's box on the screen (fractions); null = the whole screen inside the margin. */
+  box: Box | null;
+  /** Colour outside the art's box or margin; null = the paper colour. */
+  surround: string | null;
 }
 
 export interface Snapshot { doc: Doc; wall: Wall }
@@ -67,6 +71,7 @@ export const defaultDoc = (): Doc => ({
 
 export const defaultWall = (): Wall => ({
   width: 1920, height: 1080, placement: 'fit', marginPct: 0, cropToScreen: false, ink: null, paper: null,
+  box: null, surround: null,
 });
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
@@ -75,7 +80,7 @@ const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
  * The crop's aspect (width / height): the inner rectangle's with Crop to screen on, else 1. Rounded
  * so a size or margin change that keeps the shape keeps the converter's cached samples.
  */
-export function cropAspectFor(wall: Pick<Wall, 'width' | 'height' | 'marginPct' | 'cropToScreen'>): number {
+export function cropAspectFor(wall: Pick<Wall, 'width' | 'height' | 'marginPct' | 'cropToScreen' | 'box'>): number {
   if (!wall.cropToScreen) return 1;
   const r = innerRect(wall);
   return Math.round((r.w / r.h) * 1e6) / 1e6;
@@ -129,6 +134,7 @@ class AppState {
   colourBlocks = $derived(this.doc.mode === 'blocks' && this.doc.color);
   layoutIn: LayoutIn = $derived({
     width: this.wall.width, height: this.wall.height, marginPct: this.wall.marginPct, placement: this.wall.placement,
+    box: this.wall.box,
   });
   /** Crop width / height (1 = square). */
   cropAspect = $derived(cropAspectFor(this.wall));
@@ -142,7 +148,8 @@ class AppState {
   /** The colours drawn: custom picks, else Typist's file colours for the invert setting. */
   colours: Colours = $derived.by(() => {
     const rule = fileColours(this.doc.tone.invert);
-    return { ink: this.wall.ink ?? rule.ink, paper: this.wall.paper ?? rule.paper };
+    const paper = this.wall.paper ?? rule.paper;
+    return { ink: this.wall.ink ?? rule.ink, paper, surround: this.wall.surround ?? paper };
   });
 
   snapshot(): Snapshot {
