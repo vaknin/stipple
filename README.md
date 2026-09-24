@@ -185,9 +185,13 @@ underneath is the right still picture. A saved motion change reloads live.
 
 Frame 0 of every effect is the saved PNG. Motion stops behind a fullscreen window, after 60 s
 idle (screensaver, lock, screen off) and on `omarchy-shell stipple pause`; with windows open it
-slows to 2 fps (or keeps going, or stops: the Motion tab's choice), and on battery it can halve
-or stop. One fragment shader draws each frame (`shaders/wall.frag`); `src/lib/motion.ts` is its
-JS mirror for the app's preview, and the tests check the two agree.
+slows to 2 fps (or keeps going, or stops: the Motion tab's choice), and stops once windows and
+the bar cover 90% of the screen (only the gaps show); on battery it can halve or stop.
+
+One fragment shader draws each frame (`shaders/wall.frag`), and only when the picture changes:
+on each Twinkle or Shimmer tick, or each Pan frame (8 fps by default, which moves the view less
+than half a dot per frame). `src/lib/motion.ts` is its JS mirror for the app's preview, and the
+tests check the two agree.
 
 Install or update the plugin (compiles the shader, links the folder into
 `~/.config/omarchy/plugins`, enables it):

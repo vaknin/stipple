@@ -9,8 +9,9 @@
 //
 // Nothing polls: the background symlink is watched with inotifywait, the sidecar with a watched
 // FileView (the app rewrites it when motion changes), Hyprland state arrives as events. Frames
-// come from a Timer at the effect's own rate, and it stops whenever nothing can see them:
-// a fullscreen window, 60 s idle (screensaver, lock, screen off), or `stipple pause`.
+// come from a Timer at the effect's own rate, drawn only when the picture changes, and none
+// while nothing can see them: a fullscreen window, windows covering 90% of the screen,
+// 60 s idle (screensaver, lock, screen off), or `stipple pause`.
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -28,6 +29,8 @@ Item {
   readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy/current"
   /** Dev only (shell-plugin/dev): show this PNG instead of following the background symlink. */
   property string override: ""
+  /** Dev only: keep the session from idling while the surface is shown (power measurements). */
+  property bool inhibitIdle: false
 
   /** Resolved path of the current background. */
   property string current: ""
@@ -38,6 +41,8 @@ Item {
   /** Frames count time from here: time 0 is the saved PNG. */
   property real epoch: Date.now()
   property bool paused: false
+  /** Dev only (`stipple at`): show this time (s) instead of the clock's, when >= 0. */
+  property real frozen: -1
   /** Minutes since midnight, for Colour over the day. */
   property int minuteNow: 0
 
@@ -114,10 +119,14 @@ Item {
     return Math.max(m.twinkle.on ? m.twinkle.rate : 0, m.shimmer.on ? m.shimmer.rate : 0)
   }
 
-  function fpsFor(hasWindows, fullscreen) {
+  /** Share of the screen windows cover at which "slow" treats it as "still": only gaps show. */
+  readonly property real coveredStill: 0.9
+
+  function fpsFor(hasWindows, covered, fullscreen) {
     const m = root.motion
     if (!m || root.paused || root.idle || fullscreen) return 0
     let f = root.baseFps
+    if (hasWindows && m.windows === "slow" && covered >= root.coveredStill) f = 0
     if (hasWindows) f = m.windows === "still" ? 0 : m.windows === "slow" ? Math.min(f, 2) : f
     if (UPower.onBattery) f = m.battery === "still" ? 0 : m.battery === "half" ? f / 2 : f
     return f
@@ -129,7 +138,7 @@ Item {
   }
 
   // Quickshell refreshes workspaces on lifecycle events only; fullscreen and window counts are
-  // read off the same snapshot (see kivan.dictation-osd).
+  // read off the same snapshot (see kivan.dictation-osd), window geometry off the toplevels'.
   Connections {
     target: Hyprland
     function onRawEvent(event) {
@@ -143,9 +152,69 @@ Item {
       case "workspacev2":
       case "focusedmon":
         Hyprland.refreshWorkspaces()
+        Hyprland.refreshToplevels()
+        break
+      case "changefloatingmode":
+      case "activewindowv2": // the scrolling layout moves columns into view on focus
+        Hyprland.refreshToplevels()
+        break
+      case "monitoradded":
+      case "monitorremoved":
+      case "configreloaded":
+        Hyprland.refreshMonitors()
         break
       }
     }
+  }
+
+  /** Window borders count as covered (they are outside a window's at/size). */
+  property int borderSize: 2
+  Process {
+    running: true
+    command: ["hyprctl", "getoption", "general:border_size", "-j"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try { root.borderSize = JSON.parse(text).int || 0 } catch (e) {}
+      }
+    }
+  }
+
+  /** Area of the union of [x0, y0, x1, y1] rectangles. */
+  function unionArea(rects) {
+    const xs = [...new Set(rects.map(r => r[0]).concat(rects.map(r => r[2])))].sort((a, b) => a - b) // no flatMap in QML
+    let area = 0
+    for (let i = 0; i + 1 < xs.length; i++) {
+      const x0 = xs[i], x1 = xs[i + 1]
+      const ys = rects.filter(r => r[0] <= x0 && r[2] >= x1).map(r => [r[1], r[3]]).sort((a, b) => a[0] - b[0])
+      let len = 0, end = -Infinity
+      for (const [a, b] of ys) {
+        if (b <= end) continue
+        len += b - Math.max(a, end)
+        end = b
+      }
+      area += len * (x1 - x0)
+    }
+    return area
+  }
+
+  /** Share (0-1) of a monitor that the windows of workspace `ws` and its reserved edges (the bar) cover. */
+  function coverage(mon, ws) {
+    if (!mon || !ws || !mon.width || !mon.height) return 0
+    const sc = mon.scale || 1
+    const rot = (mon.transform || 0) % 2 === 1
+    const W = (rot ? mon.height : mon.width) / sc, H = (rot ? mon.width : mon.height) / sc
+    const res = mon.reserved || [0, 0, 0, 0]
+    const clip = r => [Math.max(0, r[0]), Math.max(0, r[1]), Math.min(W, r[2]), Math.min(H, r[3])]
+    const rects = [[0, 0, res[0], H], [0, 0, W, res[1]], [W - res[2], 0, W, H], [0, H - res[3], W, H]]
+    const b = root.borderSize
+    for (const t of Hyprland.toplevels.values) {
+      const o = t.lastIpcObject
+      if (!o || !o.at || !o.size || o.hidden || o.mapped === false || !o.workspace || o.workspace.id !== ws.id) continue
+      const x = o.at[0] - mon.x, y = o.at[1] - mon.y
+      rects.push([x - b, y - b, x + o.size[0] + b, y + o.size[1] + b])
+    }
+    const inside = rects.map(clip).filter(r => r[2] > r[0] && r[3] > r[1])
+    return root.unionArea(inside) / (W * H)
   }
 
   // ------------------------------------------------------------ current background
@@ -189,7 +258,11 @@ Item {
     onTriggered: { watch.running = true; root.refresh() }
   }
 
-  Component.onCompleted: refresh()
+  Component.onCompleted: {
+    refresh()
+    Hyprland.refreshMonitors()
+    Hyprland.refreshToplevels()
+  }
 
   FileView {
     id: sidecar
@@ -222,7 +295,15 @@ Item {
     target: "stipple"
 
     function pause(): string { root.paused = true; return "paused" }
-    function resume(): string { root.paused = false; return "running" }
+    function resume(): string { root.frozen = -1; root.paused = false; return "running" }
+
+    /** Pause on the frame for `seconds` after time 0 (checks). `resume` goes back to the clock. */
+    function at(seconds: real): string {
+      root.paused = true
+      root.frozen = seconds
+      surfaces.instances.forEach(w => w.tick())
+      return "at " + seconds
+    }
 
     function status(): string {
       return JSON.stringify({
@@ -232,7 +313,7 @@ Item {
         paused: root.paused,
         idle: root.idle,
         onBattery: UPower.onBattery,
-        screens: surfaces.instances.map(w => ({ name: w.screen ? w.screen.name : "", shown: w.visible, art: w.artStatus, field: w.fieldStatus, fps: w.fps, fullscreen: w.fullscreen, windows: w.hasWindows })),
+        screens: surfaces.instances.map(w => ({ name: w.screen ? w.screen.name : "", shown: w.visible, art: w.artStatus, field: w.fieldStatus, fps: w.fps, fullscreen: w.fullscreen, windows: w.hasWindows, covered: Math.round(w.covered * 1000) / 1000, frames: w.frameCount })),
       })
     }
 
@@ -269,30 +350,53 @@ Item {
       // click-through: double-clicking the desktop still reaches Omarchy's background
       mask: Region {}
 
-      readonly property var workspace: {
-        const mon = Hyprland.monitorFor(win.modelData)
-        return mon && mon.activeWorkspace ? mon.activeWorkspace.lastIpcObject : null
-      }
+      readonly property var monitor: Hyprland.monitorFor(win.modelData)
+      readonly property var workspace: win.monitor && win.monitor.activeWorkspace ? win.monitor.activeWorkspace.lastIpcObject : null
       readonly property bool fullscreen: !!win.workspace && win.workspace.hasfullscreen === true
       readonly property bool hasWindows: !!win.workspace && (win.workspace.windows || 0) > 0
-      readonly property real fps: root.fpsFor(win.hasWindows, win.fullscreen)
-      property real now: 0
+      readonly property real covered: win.hasWindows && win.visible ? root.coverage(win.monitor.lastIpcObject, win.workspace) : 0
+      readonly property real fps: root.fpsFor(win.hasWindows, win.covered, win.fullscreen)
+      readonly property bool animating: win.visible && win.fps > 0
+      /** Time (s, only while panning), twinkle tick, shimmer tick: what the frame shows. */
+      property vector4d clock: Qt.vector4d(0, 0, 0, 0)
+      /** Frames asked for so far (status, to check the pacing). */
+      property int frameCount: 0
+
+      IdleInhibitor {
+        window: win
+        enabled: root.inhibitIdle && win.visible
+      }
 
       function grab(path, w, h) {
         shader.grabToImage(r => r.saveToFile(path), Qt.size(w, h))
       }
 
+      // Set the clock for now. A tick that has not moved leaves the clock alone, so no frame is
+      // drawn for it. The timer repeats at a fixed interval: re-arming a one-shot timer after
+      // every frame makes Qt Quick render each frame twice.
+      function tick() {
+        const m = root.motion
+        if (!m) return
+        const t = root.frozen >= 0 ? root.frozen : Math.max(0, (Date.now() - root.epoch) / 1000)
+        const c = Qt.vector4d(m.pan.on ? t : 0, m.twinkle.on ? Math.floor(t * m.twinkle.rate) : 0,
+          m.shimmer.on ? Math.floor(t * m.shimmer.rate) : 0, 0)
+        if (c.x !== win.clock.x || c.y !== win.clock.y || c.z !== win.clock.z) {
+          win.clock = c
+          win.frameCount++
+        }
+      }
+
       Timer {
         interval: Math.max(16, Math.round(1000 / Math.max(win.fps, 0.1)))
         repeat: true
-        running: win.visible && win.fps > 0
+        running: win.animating
         triggeredOnStart: true
-        onTriggered: win.now = (Date.now() - root.epoch) / 1000
+        onTriggered: win.tick()
       }
 
       Connections {
         target: root
-        function onEpochChanged() { win.now = 0 }
+        function onEpochChanged() { win.tick() }
       }
 
       Image {
@@ -352,11 +456,7 @@ Item {
           return r ? Qt.vector4d(r.x, r.y, r.x + r.w, r.y + r.h) : Qt.vector4d(0, 0, cw, ch)
         }
         property color surround: root.surround
-        property vector4d clock: {
-          const m = sp ? sp.motion : null
-          const t = win.now
-          return Qt.vector4d(t, m ? Math.floor(t * m.twinkle.rate) : 0, m ? Math.floor(t * m.shimmer.rate) : 0, 0)
-        }
+        property vector4d clock: win.clock
         property var fieldTex: fieldImg
         property var artTex: artImg
       }

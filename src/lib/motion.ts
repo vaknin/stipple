@@ -39,7 +39,7 @@ export interface Motion {
 export const defaultMotion = (): Motion => ({
   twinkle: { on: false, amount: 0.04, rate: 8 },
   shimmer: { on: false, amount: 0.3, rate: 8 },
-  pan: { on: false, zoom: 0.15, period: 60, fps: 24 },
+  pan: { on: false, zoom: 0.15, period: 60, fps: 8 },
   day: { on: false, nightInk: null, nightPaper: null, nightStart: 19 * 60, nightEnd: 7 * 60, fade: 60 },
   windows: 'slow',
   battery: 'same',

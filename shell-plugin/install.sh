@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Install Stipple's animated wallpaper plugin into omarchy-shell:
-#   compile the shader, link this repo's plugin folder into ~/.config/omarchy/plugins, enable it,
+#   compile the shaders, link this repo's plugin folder into ~/.config/omarchy/plugins, enable it,
 #   and restart the shell if the plugin did not come up on its own.
-# Re-run after changing shaders/wall.frag (the compiled .qsb is not in git).
+# Re-run after changing shaders/*.frag (the compiled .qsb files are not in git).
 #   shell-plugin/install.sh              install or update
 #   shell-plugin/install.sh --uninstall  disable it and remove the link (wallpapers stay still PNGs)
 set -euo pipefail
@@ -29,8 +29,10 @@ fi
 command -v inotifywait >/dev/null || fail "inotifywait not found (inotify-tools): the plugin watches the background with it"
 
 # GLSL 330 / ES 300: older GLSL has no uint, which the dot hash needs
-"$qsb" --glsl "330,300 es" -o "$src/shaders/wall.frag.qsb" "$src/shaders/wall.frag"
-say "Compiled shaders/wall.frag.qsb"
+for f in "$src"/shaders/*.frag; do
+  "$qsb" --glsl "330,300 es" -o "$f.qsb" "$f"
+  say "Compiled shaders/${f##*/}.qsb"
+done
 
 omarchy plugin validate "$src" >/dev/null || fail "the manifest does not validate: omarchy plugin validate $src"
 
