@@ -4,27 +4,26 @@
 // commit on release (same label within 600 ms merges), a crop commits on Done. The snapshot holds
 // both the doc and the wallpaper options, so a margin or colour change undoes too.
 
-import type { AsciiMethod, BlocksKind, Dither, Grid, Mode } from '$typist/convert.js';
+import type { AsciiMethod, Grid, Mode } from '$typist/convert.js';
 import { cleanCrop } from '$typist/crop.js';
 import { History } from '$typist/history.js';
 import type { Photo } from '$typist/imageio.js';
-import { CROP_DEFAULTS, cropSize, TONE_DEFAULTS, type Crop, type LookId, type Tone } from '$typist/tone.js';
+import { CROP_DEFAULTS, cropSize, TONE_DEFAULTS, type Crop, type Tone } from '$typist/tone.js';
 import { autoCols, cellAspect, fileColours, rowsFor } from './engine/engine';
 import { clampBox, COLS_MAX, COLS_MIN, innerRect, MARGIN_MAX, type Box, type LayoutIn, type Placement } from './layout';
 import { defaultMotion, motionFor, supportFor, type Motion, type Support } from './motion';
 import type { Colours } from './render';
 import type { Monitor, ThemeColors } from './tauri';
 
-export type ToneControls = Omit<Tone, 'look'>;
+/** The styles Stipple offers (Typist's Blocks is not one of them). */
+export type Style = Exclude<Mode, 'blocks'>;
+
+/** The tone controls Stipple shows; the rest of Typist's tone stays at its defaults. */
+export type ToneControls = Pick<Tone, 'auto' | 'brightness' | 'contrast' | 'invert'>;
 
 export interface Doc {
-  mode: Mode;
-  look: LookId;
-  dither: Dither;
+  mode: Style;
   ascii: AsciiMethod;
-  blocks: BlocksKind;
-  /** Colour blocks (blocks mode only). */
-  color: boolean;
   /** null = auto (from the output size). */
   cols: number | null;
   tone: ToneControls;
@@ -63,12 +62,11 @@ export interface Notice {
   action?: { label: string; run: () => void | Promise<void> };
 }
 
-const { look: _look, ...TONE_CONTROLS } = TONE_DEFAULTS;
-export const TONE_CONTROL_DEFAULTS: Readonly<ToneControls> = Object.freeze(TONE_CONTROLS);
+const { auto, brightness, contrast, invert } = TONE_DEFAULTS;
+export const TONE_CONTROL_DEFAULTS: Readonly<ToneControls> = Object.freeze({ auto, brightness, contrast, invert });
 
 export const defaultDoc = (): Doc => ({
-  mode: 'ascii', look: 'photo', dither: 'atkinson', ascii: 'shape', blocks: 'quad', color: false,
-  cols: null, tone: { ...TONE_CONTROL_DEFAULTS, invert: true }, crop: { ...CROP_DEFAULTS },
+  mode: 'ascii', ascii: 'shape', cols: null, tone: { ...TONE_CONTROL_DEFAULTS, invert: true }, crop: { ...CROP_DEFAULTS },
 });
 
 export const defaultWall = (): Wall => ({
@@ -94,12 +92,9 @@ export function docFrom(raw: unknown): Doc {
   }
   const cols = typeof r.cols === 'number' && Number.isFinite(r.cols) ? clamp(Math.round(r.cols), COLS_MIN, COLS_MAX) : null;
   return {
-    mode: oneOf(r.mode, ['braille', 'ascii', 'blocks'] as const, d.mode),
-    look: oneOf(r.look, ['photo', 'texture', 'sketch', 'soft', 'poster'] as const, d.look),
-    dither: oneOf(r.dither, ['atkinson', 'floyd', 'bayer', 'threshold'] as const, d.dither),
+    // Blocks (no longer offered) opens as the default style
+    mode: oneOf(r.mode, ['braille', 'ascii'] as const, d.mode),
     ascii: oneOf(r.ascii, ['shape', 'ramp'] as const, d.ascii),
-    blocks: oneOf(r.blocks, ['quad', 'half'] as const, d.blocks),
-    color: r.color === true,
     cols,
     tone,
     crop: squareCrop(cleanCrop(obj(r.crop) as Partial<Crop>)),
@@ -171,8 +166,6 @@ class AppState {
   canRedo = $state(false);
   undoLabel: string | null = $state(null);
   redoLabel: string | null = $state(null);
-  /** Bumped by every commit: the look thumbnails rebuild on it. */
-  commits = $state(0);
 
   history = new History<Snapshot>({
     onChange: h => {
@@ -185,9 +178,6 @@ class AppState {
 
   /** Which effects the current style can play. */
   support: Support = $derived(supportFor(this.doc));
-
-  /** Colour blocks are on (the Colour switch only applies to Blocks). */
-  colourBlocks = $derived(this.doc.mode === 'blocks' && this.doc.color);
   layoutIn: LayoutIn = $derived({
     width: this.wall.width, height: this.wall.height, marginPct: this.wall.marginPct, placement: this.wall.placement,
     box: this.wall.box,
@@ -229,7 +219,6 @@ class AppState {
 
   /** Record a finished change (app.js commit): a merged burst ending where it began is no step. */
   commit(label: string) {
-    this.commits++;
     if (!this.loaded) return;
     const h = this.history;
     h.commit(this.snapshot(), label);
@@ -251,7 +240,6 @@ class AppState {
     this.doc = s.doc;
     this.wall = s.wall;
     this.motion = s.motion;
-    this.commits++;
   }
 
   undo() { this.#restore(this.history.undo()); }

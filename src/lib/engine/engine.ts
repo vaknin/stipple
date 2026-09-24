@@ -2,8 +2,7 @@
 //
 // convert() is async on purpose: the conversion can run on this thread or in a worker without the
 // callers noticing. Requests are latest-wins: a request that is superseded before it runs
-// resolves to null. Look thumbnails use a second converter over the same decoded photo, so they
-// never evict the main preview's cached samples and tones.
+// resolves to null.
 
 import { createConverter, gridLines, type Converter, type ConvertOpts, type Grid, type Mode } from '$typist/convert.js';
 import { cellAspect as typistCellAspect, rowsFor as typistRowsFor } from '$typist/targets.js';
@@ -31,54 +30,43 @@ export function fileColours(invert: boolean): { ink: string; paper: string } {
   return invert ? { ink: '#f2f2f0', paper: '#111113' } : { ink: '#17171a', paper: '#ffffff' };
 }
 
-/** Look thumbnails never use more columns than this. */
-export const THUMB_COLS = 64;
-
 export interface ConvertRequest { crop: Crop; opts: ConvertOpts }
 export interface ConvertResult { grid: Grid; ms: number }
-
-export type Lane = 'main' | 'thumb';
-const LANES = ['main', 'thumb'] as const;
 
 /** What a conversion backend does: inline (this thread) or in convert.worker.ts. */
 export interface Backend {
   setSource(canvas: HTMLCanvasElement): Promise<void>;
-  /** Resolves null when a newer request on the same lane replaced this one before it ran. */
-  run(req: ConvertRequest, lane: Lane): Promise<ConvertResult | null>;
+  /** Resolves null when a newer request replaced this one before it ran. */
+  run(req: ConvertRequest): Promise<ConvertResult | null>;
   dispose(): void;
 }
 
-/** Both converters on this thread. */
+/** The converter on this thread. */
 export function inlineBackend(): Backend {
-  let main: Converter = createConverter();
-  let thumb: Converter = createConverter();
+  let conv: Converter = createConverter();
   return {
     async setSource(canvas) {
-      main.setSource(canvas);
-      // the thumbnails share the decoded photo (and its summed-area tables)
-      thumb.setSource(main.decoded);
+      conv.setSource(canvas);
     },
-    async run(req, lane) {
-      const conv = lane === 'main' ? main : thumb;
+    async run(req) {
       const t0 = performance.now();
       const grid = conv.run(req.crop, req.opts);
       return { grid, ms: performance.now() - t0 };
     },
     dispose() {
-      main = createConverter();
-      thumb = createConverter();
+      conv = createConverter();
     },
   };
 }
 
 /**
- * Both converters in a module worker. One job runs at a time; the preview lane goes first, and a
- * new request replaces the queued one of its lane (a slider drag never builds a backlog).
+ * The converter in a module worker. One job runs at a time, and a new request replaces the queued
+ * one (a slider drag never builds a backlog).
  */
 export function workerBackend(): Backend {
   const worker = new Worker(new URL('./convert.worker.ts', import.meta.url), { type: 'module' });
-  type Job = { lane: Lane; req: ConvertRequest; resolve: (r: ConvertResult | null) => void; reject: (e: Error) => void };
-  const pending: Partial<Record<Lane, Job>> = {};
+  type Job = { req: ConvertRequest; resolve: (r: ConvertResult | null) => void; reject: (e: Error) => void };
+  let pending: Job | null = null;
   const waiting = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   let busy = false;
   let seq = 0;
@@ -101,12 +89,12 @@ export function workerBackend(): Backend {
 
   async function pump() {
     if (busy) return;
-    const job = pending.main ?? pending.thumb;
+    const job = pending;
     if (!job) return;
-    delete pending[job.lane];
+    pending = null;
     busy = true;
     try {
-      job.resolve(await call<ConvertResult>({ type: 'run', lane: job.lane, crop: job.req.crop, opts: job.req.opts }));
+      job.resolve(await call<ConvertResult>({ type: 'run', crop: job.req.crop, opts: job.req.opts }));
     } catch (e) {
       job.reject(e instanceof Error ? e : new Error(String(e)));
     } finally {
@@ -117,16 +105,17 @@ export function workerBackend(): Backend {
 
   return {
     async setSource(canvas) {
-      for (const lane of LANES) { pending[lane]?.resolve(null); delete pending[lane]; }
+      pending?.resolve(null);
+      pending = null;
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) throw new Error('no 2D canvas');
       const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
       await call({ type: 'source', width, height, data: data.buffer }, [data.buffer]);
     },
-    run(req, lane) {
+    run(req) {
       return new Promise((resolve, reject) => {
-        pending[lane]?.resolve(null);
-        pending[lane] = { lane, req: structuredClone(req), resolve, reject };
+        pending?.resolve(null);
+        pending = { req: structuredClone(req), resolve, reject };
         void pump();
       });
     },
@@ -146,9 +135,9 @@ export function defaultBackend(): Backend {
 
 export class Engine {
   #backend: Backend;
-  #seq = { main: 0, thumb: 0 };
-  /** Newest request whose result was handed out, per lane. */
-  #shown = { main: 0, thumb: 0 };
+  #seq = 0;
+  /** Newest request whose result was handed out. */
+  #shown = 0;
   #source = 0;
   /** Columns keyframes, converted in parallel on workers of their own. */
   readonly frames = new FramePool();
@@ -170,17 +159,12 @@ export class Engine {
    * changed); a result that is merely not the newest request still comes back, so a drag that
    * outpaces the converter shows intermediate frames instead of none.
    */
-  async convert(req: ConvertRequest, lane: Lane = 'main'): Promise<ConvertResult | null> {
-    const id = ++this.#seq[lane], source = this.#source;
-    const res = await this.#backend.run(req, lane);
-    if (!res || source !== this.#source || id <= this.#shown[lane]) return null;
-    this.#shown[lane] = id;
+  async convert(req: ConvertRequest): Promise<ConvertResult | null> {
+    const id = ++this.#seq, source = this.#source;
+    const res = await this.#backend.run(req);
+    if (!res || source !== this.#source || id <= this.#shown) return null;
+    this.#shown = id;
     return res;
-  }
-
-  /** Drop queued thumbnail work (a newer main request or thumbnail batch is coming). */
-  cancelThumbs() {
-    this.#shown.thumb = ++this.#seq.thumb;
   }
 
   dispose() {
@@ -264,7 +248,7 @@ export class FramePool {
       await call(w, { type: 'source', width, height, data: data.buffer.slice(0) });
       while (next < order.length && batch === this.#batch) {
         const i = order[next++]!;
-        const m = await call(w, { type: 'run', lane: 'main', crop: reqs[i]!.crop, opts: reqs[i]!.opts });
+        const m = await call(w, { type: 'run', crop: reqs[i]!.crop, opts: reqs[i]!.opts });
         if (batch !== this.#batch) return;
         if (m.type === 'error' || !m.grid) throw new Error(m.error ?? 'the conversion failed');
         out[i] = m.grid;

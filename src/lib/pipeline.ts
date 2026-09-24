@@ -4,11 +4,11 @@
 
 import type { ConvertOpts, Grid } from '$typist/convert.js';
 import { autoCrop, decodeImage, ImageError, imageErrorMessage, type Photo } from '$typist/imageio.js';
-import { LOOKS, type LookId } from '$typist/tone.js';
-import { cellAspect, Engine, rowsFor, THUMB_COLS, type ConvertRequest } from './engine/engine';
+import { TONE_DEFAULTS } from '$typist/tone.js';
+import { cellAspect, Engine, rowsFor, type ConvertRequest } from './engine/engine';
 import { layoutArt, type Layout } from './layout';
 import {
-  cleanMotion, columnFrameAt, columnPlan, columnStart, dotMotion, frameGrid, motionFps, packField,
+  cleanMotion, columnFrameAt, columnPlan, columnStart, frameGrid, motionFps, packField,
   type Motion,
 } from './motion';
 import { perf } from './perf.svelte';
@@ -19,7 +19,6 @@ import { errorText, readFile, readSidecar } from './tauri';
 
 export const engine = new Engine();
 const previewSurface = surfaceCache();
-const thumbSurface = surfaceCache();
 
 /**
  * Geist Mono before anything draws letters: raster.js caches each font's metrics per cell size
@@ -33,7 +32,6 @@ let preview: HTMLCanvasElement | null = null;
 let raf = 0;
 let lastKey = '';
 let lastFrame = 0;
-let thumbsDirty = false;
 
 /** The preview canvas (its backing size is set by Preview.svelte before each draw). */
 export function setPreviewCanvas(c: HTMLCanvasElement | null) {
@@ -43,12 +41,6 @@ export function setPreviewCanvas(c: HTMLCanvasElement | null) {
 
 export function schedule() {
   if (!raf) raf = requestAnimationFrame(frame);
-}
-
-/** After a commit (or a new photo): rebuild the look thumbnails once the preview is drawn. */
-export function requestThumbs() {
-  thumbsDirty = true;
-  schedule();
 }
 
 function frame(t: number) {
@@ -62,25 +54,20 @@ function frame(t: number) {
 export function currentRequest(): ConvertRequest {
   const d = app.doc;
   const opts: ConvertOpts = {
-    mode: d.mode, cols: app.cols, rows: app.rows, dither: d.dither, ascii: d.ascii, blocks: d.blocks,
-    color: app.colourBlocks, tone: { ...d.tone, look: d.look },
+    mode: d.mode, cols: app.cols, rows: app.rows, dither: 'atkinson', ascii: d.ascii, blocks: 'quad', color: false,
+    tone: { ...TONE_DEFAULTS, ...d.tone },
     // Dots carry their dot field: the animated preview and the saved field.png come from it
     field: d.mode === 'braille',
   };
   return { crop: { ...app.crop }, opts };
 }
 
-let converting = false;
-
 async function render() {
   if (!app.loaded) return;
   const req = currentRequest();
   const key = JSON.stringify(req);
   if (key !== lastKey || !app.grid) {
-    thumbs.cancel();   // the preview goes first; thumbnails wait for the next commit
-    converting = true;
     const res = await engine.convert(req);
-    converting = false;
     if (res) {
       lastKey = key;
       app.grid = res.grid;
@@ -95,10 +82,6 @@ async function render() {
   } else {
     drawPreview();
     syncFrames();
-  }
-  if (thumbsDirty && !converting && key === lastKey) {
-    thumbsDirty = false;
-    thumbs.queue();
   }
 }
 
@@ -160,7 +143,7 @@ function previewGrid(g: Grid): Grid {
     return k.grids[columnFrameAt(t, k.cols.length, m.columns.period, k.start)]!;
   }
   const f = g.field;
-  if (!app.playing || !f || !dotMotion(m)) return g;
+  if (!app.playing || !f || !m.twinkle.on) return g;
   if (packedFor !== g) { packed = packField(f); packedFor = g; }
   if (!scratch || scratch.length !== f.width * f.height) scratch = new Uint8Array(f.width * f.height);
   return frameGrid(packed!, f.width, f.height, m, (performance.now() - epoch) / 1000, scratch);
@@ -292,68 +275,6 @@ function columnsTick() {
   schedule();
 }
 
-// ---------------------------------------------------------------------------------- thumbnails
-// The five looks drawn from the user's photo at <= THUMB_COLS columns, in idle time, after commits
-// only; any main render cancels the batch (it is rebuilt at the next commit).
-
-// WebKitGTK has no requestIdleCallback: fall back to a timer, as app.js does
-const hasIdle = typeof window.requestIdleCallback === 'function';
-const idle = (fn: () => void): number =>
-  hasIdle ? window.requestIdleCallback(fn, { timeout: 400 }) : window.setTimeout(fn, 16);
-const cancelIdle = (id: number) => (hasIdle ? window.cancelIdleCallback(id) : window.clearTimeout(id));
-
-export const thumbs = {
-  canvases: new Map<LookId, HTMLCanvasElement>(),
-  token: 0,
-  job: 0,
-  key: '',
-
-  cancel() {
-    this.token++;
-    cancelIdle(this.job);
-    engine.cancelThumbs();
-    this.key = '';
-  },
-
-  queue() {
-    if (!app.loaded) return;
-    const base = currentRequest();
-    const cols = Math.min(base.opts.cols, THUMB_COLS);
-    const opts = { ...base.opts, cols, rows: rowsFor(cols, base.opts.mode, app.cropAspect), color: false, field: false };
-    const colours = app.colours;
-    const key = JSON.stringify([app.loaded.path, base.crop, opts, colours]);
-    if (key === this.key) return;
-    this.cancel();
-    this.key = key;
-    const token = this.token;
-    const looks = LOOKS.map(l => l.id);
-    const step = (i: number) => {
-      this.job = idle(async () => {
-        if (token !== this.token || i >= looks.length) return;
-        const look = looks[i]!;
-        const res = await engine.convert({ crop: base.crop, opts: { ...opts, tone: { ...opts.tone, look } } }, 'thumb');
-        if (!res || token !== this.token) return;
-        const cv = this.canvases.get(look);
-        if (cv) drawThumb(cv, res.grid, colours);
-        step(i + 1);
-      });
-    };
-    step(0);
-  },
-};
-
-function drawThumb(cv: HTMLCanvasElement, g: Grid, colours: { ink: string; paper: string }) {
-  const css = cv.clientWidth || 56;
-  const S = Math.round(css * Math.min(3, window.devicePixelRatio || 1));
-  if (cv.width !== S) { cv.width = S; cv.height = S; }
-  const ctx = cv.getContext('2d');
-  if (!ctx) return;
-  // the art fitted in the square with an 8% margin, as Typist's look thumbnails
-  const layout = layoutArt({ cols: g.cols, rows: g.rows, cellAspect: cellAspect(g.mode) },
-    { width: S, height: S, marginPct: 8, placement: 'fit' });
-  renderWallpaper(ctx, g, layout, colours, thumbSurface(S, S));
-}
-
 // -------------------------------------------------------------------------------------- intake
 
 // a CR3 arrives as the camera's JPEG from inside it (src-tauri/src/raw.rs)
@@ -375,7 +296,6 @@ async function decodePath(path: string) {
 async function adopt(photo: Photo, path: string, name: string) {
   if (app.cropping) app.cropping = false;
   await engine.setSource(photo.canvas);
-  thumbs.cancel();
   lastKey = '';
   app.grid = null;
   app.loaded = { photo, path, name };
@@ -410,7 +330,6 @@ export async function openPath(path: string, { asPhoto = false } = {}) {
     app.saved = null;
     app.resetHistory();
     app.notice = photo.small ? { kind: 'info', text: 'This photo is small, so fine details may get lost.' } : null;
-    app.commits++;
     schedule();
   } catch (e) {
     app.say('error', e instanceof ImageError ? imageErrorMessage(e) : errorText(e));
@@ -465,6 +384,5 @@ async function reopen(pngPath: string, spec: SidecarSpec, editable: boolean, seq
   app.say('info', editable
     ? `Reopened ${file}. A motion change updates it when you save; other changes save a new file.`
     : `Reopened ${file}. Saving makes a new file in ~/Pictures/Wallpapers.`);
-  app.commits++;
   schedule();
 }

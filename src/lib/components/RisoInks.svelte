@@ -16,12 +16,11 @@
 </script>
 
 <script lang="ts">
-  let { ink, paper, onpick, label = 'Riso inks', disabled = false }: {
+  let { ink, paper, onpick, label = 'Riso inks' }: {
     ink: string;
     paper: string;
     onpick: (p: InkPair) => void;
     label?: string;
-    disabled?: boolean;
   } = $props();
 </script>
 
@@ -30,7 +29,6 @@
     <button
       type="button"
       class="ghost"
-      {disabled}
       title={`${p.name}: ${p.ink} on ${p.paper}`}
       aria-label={p.name}
       aria-pressed={ink === p.ink && paper === p.paper}

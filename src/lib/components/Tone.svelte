@@ -3,16 +3,12 @@
   import Slider from './Slider.svelte';
   import Switch from './Switch.svelte';
 
-  type Key = 'brightness' | 'contrast' | 'gamma' | 'detail' | 'edges';
+  type Key = 'brightness' | 'contrast';
   const pct = (v: number) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}`;
-  const share = (v: number) => `${Math.round(v * 100)}%`;
   // app.js buildTone: labels, ranges and formats
   const SLIDERS: { key: Key; label: string; min: number; max: number; format: (v: number) => string }[] = [
     { key: 'brightness', label: 'Brightness', min: -1, max: 1, format: pct },
     { key: 'contrast', label: 'Contrast', min: -1, max: 1, format: pct },
-    { key: 'gamma', label: 'Gamma', min: 0.3, max: 3, format: v => v.toFixed(2) },
-    { key: 'detail', label: 'Detail', min: 0, max: 1, format: share },
-    { key: 'edges', label: 'Edges', min: 0, max: 1, format: share },
   ];
 
   const set = (k: Key, v: number) => { (app.doc.tone as ToneControls)[k] = v; };

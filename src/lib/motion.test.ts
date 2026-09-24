@@ -23,15 +23,11 @@ function rng(seed: number) {
   return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
 }
 
-function field(W: number, H: number, seed: number, dither: 'bayer' | 'atkinson' = 'bayer', edges = false): DotField {
+function field(W: number, H: number, seed: number): DotField {
   const r = rng(seed);
   const L = new Float32Array(W * H);
   for (let i = 0; i < L.length; i++) L[i] = r();
-  const forced = new Uint8Array(W * H);
-  if (edges) for (let i = 0; i < forced.length; i++) forced[i] = r() < 0.05 ? 1 : 0;
-  const dots = ditherDots(L, W, H, dither);
-  for (let i = 0; i < dots.length; i++) if (forced[i]) dots[i] = 1;
-  return { width: W, height: H, L, dots, forced };
+  return { width: W, height: H, L, dots: ditherDots(L, W, H, 'atkinson'), forced: new Uint8Array(W * H) };
 }
 
 const with_ = (patch: (m: Motion) => void): Motion => {
@@ -49,25 +45,14 @@ describe('shader mirror', () => {
     }
   });
 
-  test('frame 0 of a re-dithering effect is the saved Ordered dots', () => {
-    for (const [W, H, seed] of [[400, 260, 1], [8, 4, 2], [250, 1000, 3]] as const) {
-      const f = field(W, H, seed, 'bayer', seed === 1);
-      const p = packField(f);
-      const pan = with_(m => { m.pan.on = true; });
-      expect(Array.from(frameDots(p, W, H, pan, 0))).toEqual(Array.from(f.dots));
-      // the plain path reads the saved dots
-      expect(Array.from(frameDots(p, W, H, defaultMotion(), 12.5))).toEqual(Array.from(f.dots));
-    }
-  });
-
-  test('without a re-dithering effect the saved dots are drawn as they are (any dither)', () => {
-    const f = field(120, 80, 4, 'atkinson');
+  test('without Twinkle the saved dots are drawn as they are', () => {
+    const f = field(120, 80, 4);
     const p = packField(f);
     expect(Array.from(frameDots(p, 120, 80, defaultMotion(), 3))).toEqual(Array.from(f.dots));
   });
 
   test('twinkle flips one dot in about `amount` of the cells, the same at the same time', () => {
-    const W = 400, H = 260, f = field(W, H, 5, 'atkinson');
+    const W = 400, H = 260, f = field(W, H, 5);
     const p = packField(f);
     const m = with_(m => { m.twinkle.on = true; m.twinkle.amount = 0.05; });
     const a = frameDots(p, W, H, m, 1.3);
@@ -92,18 +77,6 @@ describe('shader mirror', () => {
     expect(Array.from(frameDots(p, W, H, m, 1.3 + 1 / m.twinkle.rate))).not.toEqual(Array.from(a));
   });
 
-  test('shimmer and pan move the dots but keep the amount of ink', () => {
-    const W = 200, H = 200, f = field(W, H, 6);
-    const p = packField(f);
-    const ink = (d: Uint8Array) => d.reduce((s, v) => s + v, 0) / d.length;
-    const base = ink(f.dots);
-    for (const m of [with_(m => { m.shimmer.on = true; }), with_(m => { m.pan.on = true; })]) {
-      const d = frameDots(p, W, H, m, 17.3);
-      expect(Array.from(d)).not.toEqual(Array.from(f.dots));
-      expect(Math.abs(ink(d) - base)).toBeLessThan(0.05);
-    }
-  });
-
   test('frameGrid encodes the frame as Braille', () => {
     const f = field(40, 16, 8);
     const g = frameGrid(packField(f), 40, 16, defaultMotion(), 0);
@@ -111,7 +84,7 @@ describe('shader mirror', () => {
     expect([g.cols, g.rows, g.mode]).toEqual([20, 4, 'braille']);
   });
 
-  test('the converter field: saved dots, and frame 0 of Ordered equals them', () => {
+  test('the converter field: the saved dots, drawn as they are', () => {
     const w = 300, h = 300, data = new Uint8ClampedArray(w * h * 4);
     for (let y = 0, p = 0; y < h; y++) {
       for (let x = 0; x < w; x++, p += 4) {
@@ -122,14 +95,11 @@ describe('shader mirror', () => {
     }
     const conv = createConverter();
     conv.setSource({ width: w, height: h, data });
-    for (const edges of [0, 0.8]) {
-      const g = conv.run({}, { mode: 'braille', cols: 60, rows: 35, dither: 'bayer', field: true, tone: { edges } });
-      const f = g.field!;
-      expect([f.width, f.height]).toEqual([120, 140]);
-      expect(Array.from(encodeBraille(f.dots, f.width, f.height).cp)).toEqual(Array.from(g.cp));
-      const pan = with_(m => { m.pan.on = true; });
-      expect(Array.from(frameDots(packField(f), f.width, f.height, pan, 0))).toEqual(Array.from(f.dots));
-    }
+    const g = conv.run({}, { mode: 'braille', cols: 60, rows: 35, dither: 'atkinson', field: true });
+    const f = g.field!;
+    expect([f.width, f.height]).toEqual([120, 140]);
+    expect(Array.from(encodeBraille(f.dots, f.width, f.height).cp)).toEqual(Array.from(g.cp));
+    expect(Array.from(frameDots(packField(f), f.width, f.height, defaultMotion(), 7))).toEqual(Array.from(f.dots));
     expect(conv.run({}, { mode: 'ascii', cols: 20, rows: 10 }).field).toBeNull();
   });
 });
@@ -138,18 +108,16 @@ describe('settings', () => {
   test('frame rate', () => {
     expect(motionFps(defaultMotion())).toBe(0);
     expect(motionFps(with_(m => { m.twinkle.on = true; m.twinkle.rate = 6; }))).toBe(6);
-    expect(motionFps(with_(m => { m.twinkle.on = m.shimmer.on = true; m.twinkle.rate = 6; m.shimmer.rate = 9; }))).toBe(9);
-    expect(motionFps(with_(m => { m.twinkle.on = m.pan.on = true; m.pan.fps = 12; }))).toBe(12);
   });
 
   test('motionFor keeps only what the style can play', () => {
-    const all = with_(m => { m.twinkle.on = m.shimmer.on = m.pan.on = true; });
-    const on = (m: Motion) => [m.twinkle.on, m.shimmer.on, m.pan.on];
-    expect(on(motionFor(all, { dots: true, ordered: true, letters: false }))).toEqual([true, true, true]);
-    expect(on(motionFor(all, { dots: true, ordered: false, letters: false }))).toEqual([true, false, false]);
-    expect(on(motionFor(all, { dots: false, ordered: false, letters: false }))).toEqual([false, false, false]);
-    // an older sidecar's Colour over the day is dropped
-    expect('day' in cleanMotion({ day: { on: true } })).toBe(false);
+    const all = with_(m => { m.twinkle.on = m.columns.on = true; });
+    const on = (m: Motion) => [m.twinkle.on, m.columns.on];
+    expect(on(motionFor(all, { dots: true, letters: false }))).toEqual([true, false]);
+    expect(on(motionFor(all, { dots: false, letters: true }))).toEqual([false, true]);
+    // an older sidecar's removed effects (Colour over the day, Shimmer, Pan) are dropped
+    const old = cleanMotion({ day: { on: true }, shimmer: { on: true }, pan: { on: true }, windows: 'keep' });
+    expect(Object.keys(old).sort()).toEqual(['columns', 'seed', 'twinkle']);
   });
 });
 
@@ -188,16 +156,13 @@ describe('columns', () => {
     expect(columnFrameAt(3, 1, P, 0)).toBe(0);
   });
 
-  test('frame rate, style support and older sidecars', () => {
+  test('frame rate and style support', () => {
     const m = with_(x => { x.columns.on = true; x.columns.frames = 121; x.columns.period = 20; });
     expect(motionFps(m)).toBe(12);
     expect(columnRate(1, 20)).toBe(0);
-    expect(motionFor(m, { dots: false, ordered: false, letters: true }).columns.on).toBe(true);
-    expect(motionFor(m, { dots: true, ordered: true, letters: false }).columns.on).toBe(false);
+    expect(motionFor(m, { dots: false, letters: true }).columns.on).toBe(true);
+    expect(motionFor(m, { dots: true, letters: false }).columns.on).toBe(false);
     expect(cleanMotion({ twinkle: { on: true } }).columns).toEqual(defaultMotion().columns);
-    // the first release saved a frame rate: the frames it asked for
-    const old = cleanMotion({ columns: { on: true, from: 10, to: 500, fps: 15, period: 20 } }).columns;
-    expect(old).toEqual({ on: true, from: 10, to: 500, frames: 151, period: 20 });
   });
 
   test('a plan makes the frames asked for, capped by the cells', () => {

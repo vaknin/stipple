@@ -3,7 +3,7 @@
 
 import { gridLines } from '$typist/convert.js';
 import { save, setAsWallpaper } from '../actions';
-import { layoutFor, currentGrid, drawPreview, engine, openPath, schedule, thumbs } from '../pipeline';
+import { layoutFor, currentGrid, drawPreview, engine, openPath, schedule } from '../pipeline';
 import { perf } from '../perf.svelte';
 import { rasterize, Surface } from '../rasterize';
 import { renderPng } from '../render';
@@ -50,10 +50,9 @@ async function shotFull(name = 'full.png') {
  * Simulate a Brightness drag: one slider step per animation frame (the window must be visible,
  * WebKit pauses frames otherwise). Returns p50 / p95 of run, draw and frame interval.
  */
-async function bench(mode: 'braille' | 'ascii' | 'blocks', cols: number, steps = 60, opts: { color?: boolean } = {}) {
+async function bench(mode: 'braille' | 'ascii', cols: number, steps = 60) {
   app.doc.mode = mode;
   app.doc.cols = cols;
-  app.doc.color = !!opts.color;
   app.doc.tone.brightness = 0;
   await settle(4);
   // warm-up: the first conversion at a size builds samples and JIT tiers
@@ -75,7 +74,7 @@ async function bench(mode: 'braille' | 'ascii' | 'blocks', cols: number, steps =
 
 export function install() {
   const TW = {
-    app, engine, perf, thumbs, openPath, schedule, drawPreview, settle, save, setAsWallpaper,
+    app, engine, perf, openPath, schedule, drawPreview, settle, save, setAsWallpaper,
     shotPreview, shotFull, devSave, devLog, gridLines, bench, currentGrid, layoutFor, rasterize, Surface, timerFrames,
     lines: () => (app.grid ? gridLines(app.grid) : []),
   };

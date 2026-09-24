@@ -1,13 +1,12 @@
 <script lang="ts">
   // Motion for the animated wallpaper (the kivan.stipple shell plugin plays it; the PNG stays the
   // still). Each effect keeps its settings when the style cannot play it, so switching back to
-  // Dots or Ordered brings it back. The preview plays what will be saved (pipeline.previewMotion).
+  // its style brings it back. The preview plays what will be saved (pipeline.previewMotion).
   import { COLS_MAX, COLS_MIN } from '../layout';
-  import { anyMotion, columnRate, defaultMotion, motionFps, type BatteryRule, type Motion, type Rate } from '../motion';
+  import { anyMotion, columnRate, defaultMotion, motionFps, type Motion } from '../motion';
   import { currentPlan, previewMotion } from '../pipeline';
   import { app } from '../state.svelte';
   import Icon from './Icon.svelte';
-  import Seg from './Seg.svelte';
   import Slider from './Slider.svelte';
   import Switch from './Switch.svelte';
 
@@ -21,10 +20,8 @@
   const perSec = (v: number) => `${v}/s`;
   const secs = (v: number) => (v >= 120 ? `${Math.round(v / 6) / 10} min` : `${Math.round(v)} s`);
 
-  type Effect = 'twinkle' | 'shimmer' | 'pan' | 'columns';
-  const NAMES: Record<Effect, string> = {
-    twinkle: 'Twinkle', shimmer: 'Shimmer', pan: 'Pan and zoom', columns: 'Columns',
-  };
+  type Effect = 'twinkle' | 'columns';
+  const NAMES: Record<Effect, string> = { twinkle: 'Twinkle', columns: 'Columns' };
 
   function toggle(e: Effect, on: boolean) {
     app.motion[e].on = on;
@@ -65,11 +62,6 @@
   /** Each keyframe's time (motion.ts columnRate). */
   const stepMs = (n: number, period: number) => Math.round(1000 / Math.max(columnRate(n, period), 1e-3));
 
-  function useOrdered() {
-    app.doc.dither = 'bayer';
-    app.commit('Dithering');
-  }
-
   function reroll() {
     let seed = m.seed;
     while (seed === m.seed) seed = 1 + Math.floor(Math.random() * 65535);
@@ -102,7 +94,7 @@
   {#if !s.dots}
     <p class="need" role="status">
       <Icon name="alert" size={14} />
-      <span>Twinkle, Shimmer and Pan and zoom move the Braille dots, so they need the Dots style.
+      <span>Twinkle moves the Braille dots, so it needs the Dots style.
         <button type="button" class="link" onclick={useDots}>Use Dots</button></span>
     </p>
   {/if}
@@ -118,42 +110,10 @@
     {/if}
   </div>
 
-  {#if s.dots && !s.ordered}
-    <p class="need" role="status">
-      <Icon name="alert" size={14} />
-      <span>Shimmer and Pan and zoom re-dither the picture each frame, so they need Ordered dithering.
-        <button type="button" class="link" onclick={useOrdered}>Use Ordered dithering</button></span>
-    </p>
-  {/if}
-
-  <div class="fx">
-    <Switch label="Shimmer" checked={m.shimmer.on && s.ordered} disabled={!s.ordered}
-      hint="The shading ripples with fine noise" onchange={on => toggle('shimmer', on)} />
-    {#if m.shimmer.on && s.ordered}
-      <Slider label="Amount" min={0.05} max={1} step={0.01} value={m.shimmer.amount} def={DEF.shimmer.amount}
-        format={pct} {...slide('shimmer', 'amount', 'Shimmer amount')} />
-      <Slider label="Rate" min={1} max={24} step={1} value={m.shimmer.rate} def={DEF.shimmer.rate}
-        format={perSec} {...slide('shimmer', 'rate', 'Shimmer rate')} />
-    {/if}
-  </div>
-
-  <div class="fx">
-    <Switch label="Pan and zoom" checked={m.pan.on && s.ordered} disabled={!s.ordered}
-      hint="The view drifts and slowly zooms in and out inside the crop" onchange={on => toggle('pan', on)} />
-    {#if m.pan.on && s.ordered}
-      <Slider label="Zoom" min={0.02} max={0.5} step={0.01} value={m.pan.zoom} def={DEF.pan.zoom}
-        format={v => `+${Math.round(v * 100)}%`} {...slide('pan', 'zoom', 'Zoom')} />
-      <Slider label="One cycle" min={10} max={600} step={5} value={m.pan.period} def={DEF.pan.period}
-        format={secs} {...slide('pan', 'period', 'Pan cycle')} />
-      <Slider label="Frame rate" min={4} max={30} step={1} value={m.pan.fps} def={DEF.pan.fps}
-        format={v => `${v} fps`} {...slide('pan', 'fps', 'Pan frame rate')} />
-    {/if}
-  </div>
-
-  {#if (m.twinkle.on && s.dots) || (m.shimmer.on && s.ordered)}
+  {#if m.twinkle.on && s.dots}
     <div class="row">
       <span class="hint">Pattern <span class="num">#{m.seed}</span></span>
-      <button type="button" onclick={reroll} title="Another random pattern for Twinkle and Shimmer">
+      <button type="button" onclick={reroll} title="Another random pattern for Twinkle">
         <Icon name="dice" size={14} /> Re-roll
       </button>
     </div>
@@ -203,38 +163,15 @@
   </div>
 </div>
 
-<div class="field">
-  <div class="label">Saving power</div>
-  <div class="sub">
-    <span class="dim">With windows open</span>
-    <Seg label="With windows open" small value={m.windows}
-      options={[
-        { value: 'keep', label: 'Keep', hint: 'Play at the full rate behind windows too' },
-        { value: 'slow', label: 'Slow', hint: 'At most 2 frames a second while windows are open on that screen' },
-        { value: 'still', label: 'Still', hint: 'Stop while windows are open on that screen' },
-      ] satisfies { value: Rate; label: string; hint: string }[]}
-      onpick={v => { app.motion.windows = v; app.commit('With windows open'); }} />
-  </div>
-  <div class="sub">
-    <span class="dim">On battery</span>
-    <Seg label="On battery" small value={m.battery}
-      options={[
-        { value: 'same', label: 'Same', hint: 'As on AC power' },
-        { value: 'half', label: 'Half', hint: 'Half the frame rate on battery' },
-        { value: 'still', label: 'Still', hint: 'Stop on battery' },
-      ] satisfies { value: BatteryRule; label: string; hint: string }[]}
-      onpick={v => { app.motion.battery = v; app.commit('On battery'); }} />
-  </div>
-  <p class="hint">Motion always stops behind a fullscreen window, after a minute idle and while the screen is locked.
-    It plays through the Stipple shell plugin (see the README); without it the wallpaper stays still.</p>
-</div>
+<p class="hint">Motion plays through the Stipple shell plugin (see the README); without it the wallpaper stays
+  still. It slows to 2 frames a second while windows are open, and stops behind a fullscreen window, after a
+  minute idle and while the screen is locked.</p>
 
 <style>
   .field { display: flex; flex-direction: column; gap: 6px; }
   .head { display: flex; align-items: center; gap: 8px; }
   .head .hint { flex: 1; }
   .fx { display: flex; flex-direction: column; gap: 4px; }
-  .fx + .fx { border-top: 1px solid var(--border); padding-top: 4px; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .row button { height: 26px; font-size: 12px; }
   .dim { color: var(--text-muted); }
@@ -263,5 +200,4 @@
   .ends { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .ends label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
   .ends input { height: 28px; font-size: 13px; text-align: right; }
-  .sub { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
 </style>

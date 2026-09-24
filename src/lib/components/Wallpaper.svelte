@@ -62,7 +62,6 @@
   const customSurround = $derived(w.surround != null && w.surround !== app.colours.paper);
   // ink lighter than paper without invert (or darker with it) draws a negative of the photo
   const negative = $derived.by(() => {
-    if (app.colourBlocks) return false;
     const li = luminance(app.colours.ink), lp = luminance(app.colours.paper);
     return app.doc.tone.invert ? li < lp : li > lp;
   });
@@ -207,11 +206,10 @@
 <div class="field">
   <div class="label">Colours</div>
   <div class="colours">
-    <label class="swatch" class:off={app.colourBlocks} title={app.colourBlocks ? 'Colour blocks take their colours from the photo' : 'Ink'}>
+    <label class="swatch" title="Ink">
       <input
         type="color"
         value={app.colours.ink}
-        disabled={app.colourBlocks}
         oninput={e => { app.wall.ink = e.currentTarget.value; }}
         onchange={e => { app.wall.ink = e.currentTarget.value; app.commit('Ink'); }}
       />
@@ -253,7 +251,7 @@
   </div>
   <div class="sub">
     <span class="dim">Riso inks</span>
-    <RisoInks ink={app.colours.ink} paper={app.colours.paper} disabled={app.colourBlocks} onpick={useInks} />
+    <RisoInks ink={app.colours.ink} paper={app.colours.paper} onpick={useInks} />
   </div>
   {#if negative}
     <p class="warn" role="status">
@@ -295,7 +293,6 @@
     background: var(--surface);
     cursor: pointer;
   }
-  .swatch.off { opacity: 0.5; cursor: default; }
   .swatch input {
     grid-row: span 2;
     width: 26px;

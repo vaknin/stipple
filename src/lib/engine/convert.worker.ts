@@ -1,16 +1,14 @@
-// The Typist converters off the main thread: one for the preview, one for the look thumbnails
-// (sharing the decoded photo). Messages from engine.ts workerBackend; FramePool runs several of
-// these workers for the Columns keyframes, each using the main converter.
+// The Typist converter off the main thread. Messages from engine.ts workerBackend; FramePool runs
+// several of these workers for the Columns keyframes.
 
 import { createConverter, type ConvertOpts, type Grid, type Pixels } from '$typist/convert.js';
 import type { Crop } from '$typist/tone.js';
 
 type In =
   | { type: 'source'; id: number; width: number; height: number; data: ArrayBuffer }
-  | { type: 'run'; id: number; lane: 'main' | 'thumb'; crop: Crop; opts: ConvertOpts };
+  | { type: 'run'; id: number; crop: Crop; opts: ConvertOpts };
 
-let main = createConverter();
-let thumb = createConverter();
+let conv = createConverter();
 
 const post = (msg: unknown, transfer: Transferable[] = []) =>
   (self as unknown as { postMessage(m: unknown, t: Transferable[]): void }).postMessage(msg, transfer);
@@ -19,15 +17,11 @@ self.onmessage = (e: MessageEvent<In>) => {
   const m = e.data;
   try {
     if (m.type === 'source') {
-      main = createConverter();
-      thumb = createConverter();
-      const px: Pixels = { width: m.width, height: m.height, data: new Uint8ClampedArray(m.data) };
-      main.setSource(px);
-      thumb.setSource(main.decoded);
+      conv = createConverter();
+      conv.setSource({ width: m.width, height: m.height, data: new Uint8ClampedArray(m.data) } satisfies Pixels);
       post({ type: 'source', id: m.id });
       return;
     }
-    const conv = m.lane === 'main' ? main : thumb;
     const t0 = performance.now();
     const g: Grid = conv.run(m.crop, m.opts);
     const ms = performance.now() - t0;

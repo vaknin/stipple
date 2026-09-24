@@ -9,15 +9,15 @@
 //
 // Nothing polls: the background symlink is watched with inotifywait, the sidecar with a watched
 // FileView (the app rewrites it when motion changes), Hyprland state arrives as events. Frames
-// come from a Timer at the effect's own rate, drawn only when the picture changes, and none
-// while nothing can see them: a fullscreen window, windows covering 90% of the screen,
+// come from a Timer at the effect's own rate (at most 2 a second with windows open on the
+// screen), drawn only when the picture changes, and none while nothing can see them: a
+// fullscreen window, windows covering 90% of the screen,
 // 60 s idle (screensaver, lock, screen off), or `stipple pause`.
 import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
-import Quickshell.Services.UPower
 
 Item {
   id: root
@@ -54,7 +54,7 @@ Item {
 
   readonly property var motion: root.spec ? root.spec.motion : null
   readonly property bool dots: !!root.spec && !!root.motion && root.spec.grid.mode === "braille"
-    && (root.motion.twinkle.on || root.motion.shimmer.on || root.motion.pan.on)
+    && root.motion.twinkle.on
   /** Columns (Letters): keyframes at other column counts, drawn from frames.png and glyphs.png. */
   readonly property bool letters: !!root.spec && !!root.motion && !!root.motion.columns && root.motion.columns.on
     && !!root.spec.columns && root.spec.columns.frames.length > 0
@@ -100,21 +100,18 @@ Item {
     // shows for its own time within a quarter frame (a tick that finds no change draws nothing)
     if (m && root.letters) return Math.min(60, Math.max(1, 8 * (root.spec.columns.frames.length - 1) / Math.max(m.columns.period, 1)))
     if (!m || !root.dots) return 0
-    if (m.pan.on) return m.pan.fps
-    return Math.max(m.twinkle.on ? m.twinkle.rate : 0, m.shimmer.on ? m.shimmer.rate : 0)
+    return m.twinkle.rate
   }
 
-  /** Share of the screen windows cover at which "slow" treats it as "still": only gaps show. */
+  /** Share of the screen windows cover at which motion stops: only gaps show. */
   readonly property real coveredStill: 0.9
 
   function fpsFor(hasWindows, covered, fullscreen) {
     const m = root.motion
     if (!m || root.paused || root.idle || fullscreen) return 0
-    let f = root.baseFps
-    if (hasWindows && m.windows === "slow" && covered >= root.coveredStill) f = 0
-    if (hasWindows) f = m.windows === "still" ? 0 : m.windows === "slow" ? Math.min(f, 2) : f
-    if (UPower.onBattery) f = m.battery === "still" ? 0 : m.battery === "half" ? f / 2 : f
-    return f
+    // with windows open on the screen: at most 2 frames a second, none when they cover it
+    if (hasWindows) return covered >= root.coveredStill ? 0 : Math.min(root.baseFps, 2)
+    return root.baseFps
   }
 
   IdleMonitor {
@@ -263,9 +260,8 @@ Item {
     let s = null
     try { s = JSON.parse(raw) } catch (e) { s = null }
     const m = s && s.motion
-    const on = !!m && (m.twinkle.on || m.shimmer.on || m.pan.on || (!!m.columns && m.columns.on))
-    const colourBlocks = !!s && !!s.grid && !!s.grid.fg
-    if (!s || !/^stipple\//.test(String(s.format)) || !on || colourBlocks) {
+    const on = !!m && (m.twinkle.on || (!!m.columns && m.columns.on))
+    if (!s || !/^stipple\//.test(String(s.format)) || !on) {
       root.spec = null
       return
     }
@@ -297,7 +293,6 @@ Item {
         version: root.version,
         paused: root.paused,
         idle: root.idle,
-        onBattery: UPower.onBattery,
         screens: surfaces.instances.map(w => ({ name: w.screen ? w.screen.name : "", shown: w.visible, field: w.fieldStatus, fps: w.fps, keyframe: w.keyframe, fullscreen: w.fullscreen, windows: w.hasWindows, covered: Math.round(w.covered * 1000) / 1000, frames: w.frameCount })),
       })
     }
@@ -342,7 +337,7 @@ Item {
       readonly property real covered: win.hasWindows && win.visible ? root.coverage(win.monitor.lastIpcObject, win.workspace) : 0
       readonly property real fps: root.fpsFor(win.hasWindows, win.covered, win.fullscreen)
       readonly property bool animating: win.visible && win.fps > 0
-      /** Time (s, only while panning), twinkle tick, shimmer tick: what the frame shows. */
+      /** The twinkle tick (y): what the frame shows. */
       property vector4d clock: Qt.vector4d(0, 0, 0, 0)
       /** Frames asked for so far (status, to check the pacing). */
       property int frameCount: 0
@@ -373,9 +368,8 @@ Item {
           }
           return
         }
-        const c = Qt.vector4d(m.pan.on ? t : 0, m.twinkle.on ? Math.floor(t * m.twinkle.rate) : 0,
-          m.shimmer.on ? Math.floor(t * m.shimmer.rate) : 0, 0)
-        if (c.x !== win.clock.x || c.y !== win.clock.y || c.z !== win.clock.z) {
+        const c = Qt.vector4d(0, m.twinkle.on ? Math.floor(t * m.twinkle.rate) : 0, 0, 0)
+        if (c.y !== win.clock.y) {
           win.clock = c
           win.frameCount++
         }
@@ -449,9 +443,7 @@ Item {
         }
         property vector4d effects: {
           const m = sp ? sp.motion : null
-          if (!m) return Qt.vector4d(0, 0, 0, 1)
-          return Qt.vector4d(m.twinkle.on ? m.twinkle.amount : 0, m.shimmer.on ? m.shimmer.amount : 0,
-            m.pan.on ? m.pan.zoom : 0, m.pan.period)
+          return Qt.vector4d(m && m.twinkle.on ? m.twinkle.amount : 0, 0, 0, 0)
         }
         property vector4d inner: {
           const r = sp && sp.layout.inner

@@ -6,7 +6,6 @@
   import Actions from '$lib/components/Actions.svelte';
   import CropModal from '$lib/components/CropModal.svelte';
   import Icon from '$lib/components/Icon.svelte';
-  import Looks from '$lib/components/Looks.svelte';
   import Motion from '$lib/components/Motion.svelte';
   import Notice from '$lib/components/Notice.svelte';
   import PerfOverlay from '$lib/components/PerfOverlay.svelte';
@@ -191,7 +190,7 @@
     <footer class="status num">
       {#if app.grid}
         <span>{app.grid.cols}×{app.grid.rows}</span>
-        <span>{app.grid.mode === 'braille' ? 'Dots' : app.grid.mode === 'ascii' ? 'Letters' : 'Blocks'}</span>
+        <span>{app.grid.mode === 'braille' ? 'Dots' : 'Letters'}</span>
       {/if}
       <span>{app.wall.width}×{app.wall.height} {app.wall.placement}{app.wall.box ? ` in ${boxLabel(app.wall)}` : app.wall.marginPct ? ` +${app.wall.marginPct}%` : ''}</span>
       {#if app.grid}<span class="dim">{app.runMs.toFixed(1)} ms</span>{/if}
@@ -206,7 +205,6 @@
     </div>
     <div class="panel" role="tabpanel">
       {#if tab === 'look'}
-        <Looks />
         <Style />
         <Size />
       {:else if tab === 'tone'}
