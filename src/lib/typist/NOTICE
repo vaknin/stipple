@@ -1,0 +1,61 @@
+Typist engine, vendored
+=======================
+
+Upstream:  https://github.com/winchxyz/typist
+Commit:    7081dce (2026-09-23) "Reddit: copy the art as an HTML code block too, so the rich-text
+           editor keeps it"
+License:   MIT, (c) 2026 winch. See LICENSE in this directory.
+
+What is here
+------------
+js/        tone, convert, dither, blocks, ascii, shape-vectors, raster, export, imageio, crop,
+           history, targets, count from upstream js/. Unchanged except the patches below.
+           targets.js and count.js are kept whole only because export.js (and its test) import
+           them; the app calls only targets.cellAspect / rowsFor.
+tests/     ascii, convert, export and fuzz .test.mjs, unchanged, plus aspect.test.mjs (Typist Wall's
+           own, for the crop aspect below). Run them with `bun run test:engine` (node --test; bun
+           test does not report these plain assert scripts correctly).
+
+Local changes (each marked "Typist Wall patch" in the source)
+-------------------------------------------------------------
+js/ui.js       Trimmed to paintRange() and announce(), copied verbatim from upstream ui.js
+               (lines 6-10 and 222-228), because crop.js imports them. The rest of ui.js is DOM
+               widgets this app implements in Svelte.
+js/convert.js  ascii.js is imported statically. Upstream's top-level `await import()` made every
+               importer's module graph async, which broke SvelteKit's page loading in WebKitGTK.
+js/tone.js     Memoises, per sampled grid, the stages of each look that do not depend on the
+               brightness / contrast / gamma (and where possible detail) sliders: the photo look's
+               guided filter, saliency, local min/max and border flood fill; texture's activity
+               mask and CLAHE; sketch's XDoG Gaussians; the soft and poster blurs. Same operations
+               in the same order: output is bit-identical to upstream (checked on 210 random
+               slider sequences across all looks). A 150-column Dots drag went from 63 to 20 ms.
+Crop aspect (Crop to screen aspect). A crop may carry `aspect` = width / height; missing or 1 is
+upstream's square, and a square crop's output is bitwise upstream's (checked against a 7081dce
+clone: samples, toneGrid for every look, Braille and block grids, autoCrop, over random crops and
+tones, with the aspect unset and set to 1).
+js/tone.js     cropAspect() and cropSize(): at zoom 1 the largest rectangle of that aspect on the
+               photo, as the square is. sampleDecoded samples cropSize's width x height.
+js/convert.js  The sample cache key includes the aspect.
+js/crop.js     The frame has the crop's aspect (frame() also returns its width `w`; `size` is its
+               height), scale() uses min(w / aspect, h), draw() draws the rectangle; cleanCrop /
+               snapshot / keyOf keep the aspect; arrow keys step by the frame's short side;
+               fitCropFor(crop, w, h) fits a turned rectangle (a square is unchanged).
+js/imageio.js  autoCrop(img, aspect): frames a cut-out's box and biases portraits for a rectangle
+               (aspect 1 returns upstream's result).
+js/ascii.js    resampleL builds its per-axis taps once as flat typed arrays (bit-identical).
+               asciiCells folds that resample into the circle weights when the input has a whole
+               number of samples per cell (the converter's 4 x 8), instead of building a 1.4 M
+               sample raster per conversion. Circle means are exact; the paper / dark levels are
+               measured on the samples themselves rather than on the upsampled raster, so about
+               1 cell in 10 can pick a different glyph than upstream. Letters at 150 columns went
+               from ~110 to ~65 ms.
+
+Not used: raster.js drawGrid (the app rasterises in src/lib/rasterize.ts with the same geometry;
+canvas drawing calls are too slow in WebKitGTK) and export.js's exporters.
+
+To take an upstream fix:
+  diff -r <typist clone>/js src/lib/typist/js      # the patches above plus the dropped files
+  port the change, keep the patches, re-run `bun run test:engine`, update the commit above.
+
+Dropped (social targets, clipboard, video, UI): app.js, copy.js, links.js, share.js, preview.js,
+samples.js, store.js, encoder.js, vendor/, the rest of ui.js and every other test.
