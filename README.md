@@ -19,11 +19,16 @@ instead, with the art fitted (or filled) and the rest in the paper colour, so no
    - **Tone**: Invert, Auto levels, Brightness, Contrast, Gamma, Detail, Edges. Double-click a
      slider to reset it; click its value to type one.
    - **Crop** (`F`): move, zoom (wheel, `+`/`-`), rotate (`R`), Fit; Enter applies, Escape cancels.
-   - **Wallpaper**: output size (your monitors from Hyprland, or any W × H), Fit or Fill, Margin,
-     **Crop to screen aspect**, Ink and Paper colours ("Invert rule" or the current Omarchy theme's
-     colours).
+   - **Wallpaper**: output size (your monitors from Hyprland, or any W × H), **Art area** (the
+     whole screen, or a box you size and place; drag the art in the preview to move it, scroll
+     over it to resize), Fit or Fill, Margin, **Crop to screen aspect**, Ink, Paper and Surround
+     colours ("Invert rule" or the current Omarchy theme's colours).
+   - **Motion**: Twinkle, Shimmer, Pan and zoom, Colour over the day (see
+     [Animated wallpapers](#animated-wallpapers)). The preview plays it; the pause button shows
+     the still.
 3. **Save** (`S`) writes `~/Pictures/Wallpapers/<photo>-stipple-<W>x<H>.png` (never overwriting:
    `-2`, `-3`… on collision) and a `.stipple.json` next to it.
+   Saving again after changing only the motion updates that file instead of making a new one.
    **Set as wallpaper** saves if needed and runs `omarchy theme bg set`, then checks that
    `omarchy theme bg current` names the new file.
 
@@ -41,6 +46,10 @@ joins that theme's rotation.
 | `\` (hold) | Show the photo instead of the art |
 | `S` | Save |
 
+**Reopen** a saved wallpaper by opening its PNG: Stipple loads the photo it was made from with every
+setting and the motion, so you can change the motion later (Save updates the file in place) or
+make a new version from it (any other change saves a new file).
+
 ## Output format: PNG plus a JSON sidecar
 
 - **PNG** is what Omarchy can set today and what `omarchy theme bg next` rotates through
@@ -51,6 +60,10 @@ joins that theme's rotation.
   screen aspect on, `crop.aspect` is the width / height it was cropped at), the wallpaper options,
   the layout (cell size and position), the source path and the engine commit.
   A future animated renderer can re-render, re-characterise or animate from this file alone.
+- **`.stipple/<name>/field.png`** (Dots only) is the dot field the animated wallpaper reads: one
+  pixel per dot, the saved dot, the tone and the dots edge emphasis forced on. It sits in a hidden
+  folder so `omarchy theme bg next` never shows it. The sidecar (format `stipple/2`) also holds the
+  motion.
 - **No SVG.** It can be regenerated from the JSON at any time; letters would need the font
   embedded; and an SVG would never be in Omarchy's rotation. (Whether `omarchy theme bg set`
   renders an SVG statically through qt6-svg was not tested.)
@@ -115,7 +128,7 @@ Toolchain comes from the project's `mise.toml` (Rust stable, Bun 1.4.2).
 ```sh
 bun install
 bun tauri dev            # dev window with hot reload (and the dev bridge below)
-bun run test             # layout math (bun test)
+bun run test             # layout math and the shader's JS mirror (bun test)
 bun run test:engine      # the vendored Typist engine tests (node --test)
 bun run check            # svelte-check, strict TypeScript
 (cd src-tauri && cargo test && cargo clippy --all-targets)
@@ -133,7 +146,8 @@ install -Dm644 assets/stipple.desktop ~/.local/share/applications/stipple.deskto
 **Dev bridge**: in `bun tauri dev` only, `dev/tw.sh 'return TW.app.doc'` runs a snippet in the app
 window and prints the answer (`src/lib/dev/hooks.ts` lists what `TW` offers, including a drag
 benchmark, `TW.bench('ascii', 150)`). WebKit pauses animation frames while the window is on a hidden
-workspace, so timings need it visible.
+workspace, so timings need it visible; `TW.timerFrames()` runs frames on a timer so scripts can
+render a parked window anyway.
 
 ## Design notes
 
@@ -142,7 +156,8 @@ workspace, so timings need it visible.
 - **Tauri 3 (alpha)** by choice instead of Tauri 2.
 - **Rust commands** (`src-tauri/src/commands.rs`), and nothing broader: `monitors`, `read_file`
   (PNG/JPEG/WebP ≤ 64 MB; the dialog and drag-and-drop give paths, not bytes), `save_png` (raw
-  body, checks the PNG is exactly W×H), `save_sidecar`, `set_wallpaper` (only files in
+  body, checks the PNG is exactly W×H), `save_sidecar` (replaced atomically), `save_field` (raw RGB
+  body, encoded as `field.png`), `read_sidecar` (reopening), `set_wallpaper` (only files in
   `~/Pictures/Wallpapers` or the theme backgrounds), `add_to_theme_backgrounds`, `theme_colors`.
   The capability grants exactly these plus drag-and-drop events and the open dialog; no fs or
   shell plugin, no `core:default`.
@@ -152,16 +167,36 @@ workspace, so timings need it visible.
   `#f2f2f0` on `#111113`. The Wallpaper tab warns when custom colours would draw a negative.
 - Engine changes are listed in `src/lib/typist/NOTICE`.
 
-## Animated wallpapers later
+## Animated wallpapers
 
-Not in v1. What is known:
+Omarchy's own background only shows a still picture, so the motion is drawn by a shell plugin,
+`kivan.stipple` (`shell-plugin/kivan.stipple`), running inside omarchy-shell. It puts a surface on
+the Bottom layer, above Omarchy's background and below every window, and ignores the mouse. It
+shows only when the current background is a Stipple PNG whose sidecar turns motion on; for
+anything else (`bg next`, a theme change, a plain picture, the plugin off) it hides and the PNG
+underneath is the right still picture. A saved motion change reloads live.
 
-- Omarchy's background is a plain QML `Image` (not `AnimatedImage`) with `PreserveAspectCrop`
-  hard-coded in `/usr/share/omarchy/shell/plugins/background/Background.qml`, so it only ever shows
-  a static frame; an animated GIF or WebP would show its first frame.
-- A moving wallpaper therefore needs its own renderer on the background layer, not
-  `omarchy theme bg set`: a user shell plugin under `~/.config/omarchy/plugins/`, or a separate
-  layer-shell process (for example a small Rust client drawing the grid).
-- The `.stipple.json` sidecar is the input such a renderer needs: the grid, its layout and colours,
-  and the settings to re-run the engine (characters that change over time, a slow drift of the
-  tone, a re-crop).
+| Effect | Needs | What moves |
+| --- | --- | --- |
+| Twinkle | Dots | a few dots blink, picked at random each tick |
+| Shimmer | Dots, Ordered dithering | the shading is re-dithered with fine noise |
+| Pan and zoom | Dots, Ordered dithering | the view drifts and slowly zooms inside the crop |
+| Colour over the day | any style but colour blocks | ink and paper turn to night colours after dark |
+
+Frame 0 of every effect is the saved PNG. Motion stops behind a fullscreen window, after 60 s
+idle (screensaver, lock, screen off) and on `omarchy-shell stipple pause`; with windows open it
+slows to 2 fps (or keeps going, or stops: the Motion tab's choice), and on battery it can halve
+or stop. One fragment shader draws each frame (`shaders/wall.frag`); `src/lib/motion.ts` is its
+JS mirror for the app's preview, and the tests check the two agree.
+
+Install or update the plugin (compiles the shader, links the folder into
+`~/.config/omarchy/plugins`, enables it):
+
+```sh
+shell-plugin/install.sh
+shell-plugin/install.sh --uninstall   # back to still wallpapers
+omarchy-shell stipple status          # what it shows, fps, pause state
+```
+
+To work on it without touching the running shell:
+`STIPPLE_CURRENT=<png> quickshell -p shell-plugin/dev` (stop with `quickshell kill -p shell-plugin/dev`).
