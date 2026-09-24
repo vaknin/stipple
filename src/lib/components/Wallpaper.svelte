@@ -4,6 +4,7 @@
   import { luminance } from '../render';
   import { app } from '../state.svelte';
   import Icon from './Icon.svelte';
+  import RisoInks, { type InkPair } from './RisoInks.svelte';
   import Seg from './Seg.svelte';
   import Slider from './Slider.svelte';
   import Switch from './Switch.svelte';
@@ -72,6 +73,14 @@
     app.wall.ink = app.theme.foreground;
     app.wall.paper = app.theme.background;
     app.commit('Theme colours');
+  }
+
+  /** A riso pair; Invert follows it, so light ink on dark paper stays a positive picture. */
+  function useInks(p: InkPair) {
+    app.wall.ink = p.ink;
+    app.wall.paper = p.paper;
+    app.doc.tone.invert = luminance(p.ink) > luminance(p.paper);
+    app.commit('Riso inks');
   }
 
   function resetColours() {
@@ -242,6 +251,10 @@
       <Icon name="palette" size={14} /> Theme colours
     </button>
   </div>
+  <div class="sub">
+    <span class="dim">Riso inks</span>
+    <RisoInks ink={app.colours.ink} paper={app.colours.paper} disabled={app.colourBlocks} onpick={useInks} />
+  </div>
   {#if negative}
     <p class="warn" role="status">
       <Icon name="alert" size={14} />
@@ -268,6 +281,7 @@
   .lf .wh input { width: 100%; min-width: 0; }
   .hint { margin: 0; font-size: 12px; color: var(--text-muted); }
   .same { font-size: 12px; }
+  .sub { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
   .colours { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .swatch {
     display: grid;

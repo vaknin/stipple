@@ -6,6 +6,7 @@
   import { previewMotion } from '../pipeline';
   import { app } from '../state.svelte';
   import Icon from './Icon.svelte';
+  import RisoInks from './RisoInks.svelte';
   import Seg from './Seg.svelte';
   import Slider from './Slider.svelte';
   import Switch from './Switch.svelte';
@@ -180,6 +181,8 @@
           <span class="num dim">{night.paper}</span>
         </label>
       </div>
+      <RisoInks label="Riso inks for the night" ink={night.ink} paper={night.paper}
+        onpick={p => { app.motion.day.nightInk = p.ink; app.motion.day.nightPaper = p.paper; app.commit('Night colours'); }} />
       <button type="button" class="small" disabled={m.day.nightInk == null && m.day.nightPaper == null}
         title="Night is the day's ink and paper swapped: a negative of the day picture"
         onclick={() => { app.motion.day.nightInk = null; app.motion.day.nightPaper = null; app.commit('Night colours'); }}>
