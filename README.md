@@ -22,8 +22,9 @@ instead, with the art fitted (or filled) and the rest in the paper colour, so no
    - **Wallpaper**: output size (your monitors from Hyprland, or any W × H), **Art area** (the
      whole screen, or a box you size and place; drag the art in the preview to move it, scroll
      over it to resize), Fit or Fill, Margin, **Crop to screen aspect**, Ink, Paper and Surround
-     colours ("Invert rule" or the current Omarchy theme's colours).
-   - **Motion**: Twinkle, Shimmer, Pan and zoom, Columns, Colour over the day (see
+     colours ("Invert rule" or the current Omarchy theme's colours), and eight **Riso inks**
+     presets: light risograph inks on dark paper.
+   - **Motion**: Twinkle, Shimmer, Pan and zoom, Columns (see
      [Animated wallpapers](#animated-wallpapers)). The preview plays it; the pause button shows
      the still.
 3. **Save** (`S`) writes `~/Pictures/Wallpapers/<photo>-stipple-<W>x<H>.png` (never overwriting:
@@ -65,10 +66,11 @@ make a new version from it (any other change saves a new file).
   folder so `omarchy theme bg next` never shows it. The sidecar (format `stipple/2`) also holds the
   motion.
 - **`.stipple/<name>/frames.png`** and **`glyphs.png`** (Letters with Columns motion) are the
-  keyframes: the engine converts the photo at column counts spaced geometrically from From to To,
-  one per frame of the sweep (**Frame rate** × half of **One cycle**, fewer if all the cells would
-  not fit a 4096 × 6000 texture), plus the saved count so the sweep starts on the PNG. The
-  conversions run in parallel on up to 6 workers. The sweep goes there and back at an even pace,
+  keyframes: the engine converts the photo at **Smoothness** column counts spaced geometrically
+  from From to To (fewer if all the cells would not fit a 4096 × 6000 texture), plus the saved
+  count so the sweep starts on the PNG. The conversions run in parallel on up to 6 workers, and
+  the app keeps each count it converted: a new From, To or Smoothness converts only the counts it
+  adds, and **One cycle** (the pace) converts nothing. The sweep goes there and back at an even pace,
   so every keyframe shows for the same time. `frames.png` holds every
   keyframe's cells as one byte each (1 + the glyph's index, 0 blank), in shelves; `glyphs.png` has
   each letter used drawn once per power-of-two cell height (up to 256 px), three letters per texel
@@ -194,7 +196,6 @@ underneath is the right still picture. A saved motion change reloads live.
 | Shimmer | Dots, Ordered dithering | the shading is re-dithered with fine noise |
 | Pan and zoom | Dots, Ordered dithering | the view drifts and slowly zooms inside the crop |
 | Columns | Letters | the column count sweeps From → To → From (any counts in 4–4096) |
-| Colour over the day | any style but colour blocks | ink and paper turn to night colours after dark |
 
 Frame 0 of every effect is the saved PNG. Motion stops behind a fullscreen window, after 60 s
 idle (screensaver, lock, screen off) and on `omarchy-shell stipple pause`; with windows open it

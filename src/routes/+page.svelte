@@ -42,7 +42,6 @@
     JSON.stringify(app.wall);
     void app.loaded;
     void app.peeking;
-    void app.previewMinute;
     untrack(schedule);
   });
 

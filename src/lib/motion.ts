@@ -1,18 +1,16 @@
 // Animated wallpapers: the settings, the dot field the renderer reads, and a JS mirror of the
 // shell plugin's shader (shell-plugin/kivan.stipple/shaders/wall.frag) for the app's preview.
-// Keep hash, BAYER4, panned, dotOn and nightWeight in step with wall.frag / Service.qml.
+// Keep hash, BAYER4, panned, dotOn and columnFrameAt in step with wall.frag / Service.qml.
 //
 // Effects (combinable):
 //   Twinkle   a few cells, picked at random each tick, flip one dot (Dots, any dither)
 //   Shimmer   the tone is re-dithered each tick with noise in the threshold (Dots + Ordered)
 //   Pan       the view breathes in and wanders inside the crop, re-dithered (Dots + Ordered)
-//   Day       ink and paper blend to night colours with the clock (any mono style)
 //   Columns   the column count sweeps From -> To -> From through real keyframes (Letters)
 
 import type { DotField, Grid } from '$typist/convert.js';
 import { encodeBraille } from '$typist/dither.js';
 import { COLS_MAX, COLS_MIN } from './layout';
-import type { Colours } from './render';
 
 export type Rate = 'keep' | 'slow' | 'still';
 export type BatteryRule = 'same' | 'half' | 'still';
@@ -21,19 +19,11 @@ export interface Motion {
   twinkle: { on: boolean; amount: number; rate: number };
   shimmer: { on: boolean; amount: number; rate: number };
   pan: { on: boolean; zoom: number; period: number; fps: number };
-  day: {
-    on: boolean;
-    /** null = the day colours swapped (a negative by night). */
-    nightInk: string | null;
-    nightPaper: string | null;
-    /** Minutes since midnight. */
-    nightStart: number;
-    nightEnd: number;
-    /** Minutes the change takes, centred on each boundary. */
-    fade: number;
-  };
-  /** Keyframes from `from` to `to` columns and back once per `period` s, `fps` new ones a second. */
-  columns: { on: boolean; from: number; to: number; fps: number; period: number };
+  /**
+   * `frames` keyframes from `from` to `to` columns (fewer when they would not fit), there and back
+   * once per `period` s. The period only sets the pace: changing it renders nothing.
+   */
+  columns: { on: boolean; from: number; to: number; frames: number; period: number };
   /** With windows open on the screen's workspace. */
   windows: Rate;
   battery: BatteryRule;
@@ -44,20 +34,19 @@ export const defaultMotion = (): Motion => ({
   twinkle: { on: false, amount: 0.04, rate: 8 },
   shimmer: { on: false, amount: 0.3, rate: 8 },
   pan: { on: false, zoom: 0.15, period: 60, fps: 8 },
-  day: { on: false, nightInk: null, nightPaper: null, nightStart: 19 * 60, nightEnd: 7 * 60, fade: 60 },
-  columns: { on: false, from: 10, to: 500, fps: 15, period: 20 },
+  columns: { on: false, from: 10, to: 500, frames: 130, period: 20 },
   windows: 'slow',
   battery: 'same',
   seed: 1,
 });
 
 /** What each effect needs, for the Motion tab to explain a disabled switch. */
-export interface Support { dots: boolean; ordered: boolean; mono: boolean; letters: boolean }
+export interface Support { dots: boolean; ordered: boolean; letters: boolean }
 
 /** Which effects a style can play: dot effects need Dots, re-dithering needs Ordered too. */
 export function supportFor(doc: { mode: string; dither: string; color: boolean }): Support {
   const dots = doc.mode === 'braille';
-  return { dots, ordered: dots && doc.dither === 'bayer', mono: !(doc.mode === 'blocks' && doc.color), letters: doc.mode === 'ascii' };
+  return { dots, ordered: dots && doc.dither === 'bayer', letters: doc.mode === 'ascii' };
 }
 
 /** Motion from a sidecar (any older or partial form) over the defaults. */
@@ -80,37 +69,42 @@ export function cleanMotion(raw: unknown): Motion {
     twinkle: part(d.twinkle, r.twinkle),
     shimmer: part(d.shimmer, r.shimmer),
     pan: part(d.pan, r.pan),
-    day: part(d.day, r.day),
-    columns: part(d.columns, r.columns),
+    columns: part(d.columns, columnsFrom(r.columns)),
     windows: pick(r.windows, ['keep', 'slow', 'still'] as const, d.windows),
     battery: pick(r.battery, ['same', 'half', 'still'] as const, d.battery),
     seed: typeof r.seed === 'number' && Number.isFinite(r.seed) ? r.seed >>> 0 : d.seed,
   };
 }
 
-export const anyMotion = (m: Motion) => m.twinkle.on || m.shimmer.on || m.pan.on || m.day.on || m.columns.on;
+/** Columns from the first release asked for `fps` keyframes a second: the frames that made. */
+function columnsFrom(v: unknown): unknown {
+  if (!v || typeof v !== 'object') return v;
+  const c = v as Record<string, unknown>;
+  if (typeof c.frames === 'number' || typeof c.fps !== 'number' || typeof c.period !== 'number') return v;
+  return { ...c, frames: Math.round((c.fps * c.period) / 2) + 1 };
+}
+
+export const anyMotion = (m: Motion) => m.twinkle.on || m.shimmer.on || m.pan.on || m.columns.on;
 /** Effects drawn from the dot field (Dots only). */
 export const dotMotion = (m: Motion) => m.twinkle.on || m.shimmer.on || m.pan.on;
 /** Effects that re-dither the tone (need Ordered dithering to start from the saved dots). */
 export const toneMotion = (m: Motion) => m.shimmer.on || m.pan.on;
 
-/** Frames per second the effects need (the plugin's baseFps). 0 = still between colour changes. */
+/** Frames per second the effects need (the plugin's baseFps). 0 = still. */
 export function motionFps(m: Motion): number {
-  if (m.columns.on) return Math.min(30, Math.max(1, m.columns.fps));
+  if (m.columns.on) return columnRate(m.columns.frames, m.columns.period);
   if (!dotMotion(m)) return 0;
   if (m.pan.on) return m.pan.fps;
   return Math.max(m.twinkle.on ? m.twinkle.rate : 0, m.shimmer.on ? m.shimmer.rate : 0);
 }
 
 /** The motion as the sidecar stores it: only the effects this wallpaper can play stay on. */
-export function motionFor(m: Motion, s: Support, colours: Colours): Motion {
-  const night = nightColours(m, colours);
+export function motionFor(m: Motion, s: Support): Motion {
   return {
     ...m,
     twinkle: { ...m.twinkle, on: m.twinkle.on && s.dots },
     shimmer: { ...m.shimmer, on: m.shimmer.on && s.dots && s.ordered },
     pan: { ...m.pan, on: m.pan.on && s.dots && s.ordered },
-    day: { ...m.day, on: m.day.on && s.mono, nightInk: night.ink, nightPaper: night.paper },
     columns: { ...m.columns, on: m.columns.on && s.letters },
   };
 }
@@ -137,18 +131,34 @@ export function columnKeyframes(from: number, to: number, steps: number, saved: 
 export const COLUMN_CELLS_MAX = 4096 * 6000;
 
 /**
- * The keyframes a Columns setting makes: one per frame of a sweep (fps x half the cycle), fewer
- * when all their cells would not fit COLUMN_CELLS_MAX. `rowsOf` gives a count's rows.
+ * The keyframes a Columns setting makes: `frames` distinct counts (all the whole numbers in the
+ * range when it holds fewer), fewer when all their cells would not fit COLUMN_CELLS_MAX. `rowsOf`
+ * gives a count's rows. `capped`: the cell budget cut them.
  */
-export function columnPlan(c: Motion['columns'], saved: number, rowsOf: (cols: number) => number) {
-  const want = Math.max(2, Math.round(Math.max(1, c.fps) * Math.max(1, c.period) / 2) + 1);
+export function columnPlan(c: Pick<Motion['columns'], 'from' | 'to' | 'frames'>, saved: number, rowsOf: (cols: number) => number) {
+  const want = Math.max(2, Math.round(Number.isFinite(c.frames) ? c.frames : 2));
+  // whole numbers collide near the coarse end: add steps until there are `want` distinct counts
   let steps = want;
-  for (;;) {
-    const cols = columnKeyframes(c.from, c.to, steps, saved);
-    const cells = cols.reduce((a, k) => a + k * rowsOf(k), 0);
-    if (cells <= COLUMN_CELLS_MAX || steps <= 2) return { cols, cells, capped: steps < want };
-    steps = Math.max(2, Math.floor(steps * 0.8));
+  let cols = columnKeyframes(c.from, c.to, steps, saved);
+  const whole = () => cols[cols.length - 1]! - cols[0]! + 1;
+  while (cols.length < want && cols.length < whole() && steps < 1e5) {
+    steps += Math.max(1, want - cols.length);
+    cols = columnKeyframes(c.from, c.to, steps, saved);
   }
+  const cellsOf = (k: number[]) => k.reduce((a, n) => a + n * rowsOf(n), 0);
+  let cells = cellsOf(cols), capped = false;
+  while (cells > COLUMN_CELLS_MAX && steps > 2) {
+    steps = Math.max(2, Math.floor(steps * 0.8));
+    cols = columnKeyframes(c.from, c.to, steps, saved);
+    cells = cellsOf(cols);
+    capped = true;
+  }
+  return { cols, cells, capped };
+}
+
+/** Keyframe changes a second: a sweep there and back is 2 (n - 1) steps (columnFrameAt). */
+export function columnRate(n: number, period: number): number {
+  return n < 2 ? 0 : Math.min(60, (2 * (n - 1)) / Math.max(period, 1));
 }
 
 /** The keyframe to start on: the saved count's, or the nearer end. */
@@ -262,44 +272,3 @@ export function frameGrid(packed: Uint8Array, W: number, H: number, m: Motion, t
   const g = encodeBraille(frameDots(packed, W, H, m, t, scratch), W, H);
   return { mode: 'braille', cols: g.cols, rows: g.rows, cp: g.cp, fg: null, bg: null, ink: g.ink };
 }
-
-// ------------------------------------------------------------------------ colour over the day
-
-/** 0 by day, 1 by night, ramping over `fade` minutes centred on each boundary (Service.qml). */
-export function nightWeight(minute: number, start: number, end: number, fade: number): number {
-  const fwd = (a: number, b: number) => (((a - b) % 1440) + 1440) % 1440;
-  const inside = start <= end ? minute >= start && minute < end : minute >= start || minute < end;
-  if (fade > 0) {
-    const h = fade / 2, s = fwd(minute, start), e = fwd(minute, end);
-    if (s < h) return 0.5 + s / fade;
-    if (1440 - s <= h) return 0.5 - (1440 - s) / fade;
-    if (e < h) return 0.5 - e / fade;
-    if (1440 - e <= h) return 0.5 + (1440 - e) / fade;
-  }
-  return inside ? 1 : 0;
-}
-
-/** The night colours: chosen, or the day's swapped. */
-export function nightColours(m: Motion, c: Colours): { ink: string; paper: string } {
-  return { ink: m.day.nightInk ?? c.paper, paper: m.day.nightPaper ?? c.ink };
-}
-
-function mixHex(a: string, b: string, t: number): string {
-  const p = (h: string) => parseInt(h.replace('#', ''), 16) || 0;
-  const x = p(a), y = p(b);
-  const ch = (s: number) => Math.round(((x >> s) & 255) + (((y >> s) & 255) - ((x >> s) & 255)) * t);
-  return '#' + ((1 << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).slice(1);
-}
-
-/** The colours at a minute of the day (the day colours when Colour over the day is off). */
-export function coloursAt(m: Motion, c: Colours, minute: number): Colours {
-  if (!m.day.on) return c;
-  const w = nightWeight(minute, m.day.nightStart, m.day.nightEnd, m.day.fade);
-  const n = nightColours(m, c);
-  const surround = c.surround && c.surround !== c.paper ? c.surround : undefined;
-  const paper = mixHex(c.paper, n.paper, w);
-  return { ink: mixHex(c.ink, n.ink, w), paper, surround: surround ?? paper };
-}
-
-export const hhmm = (min: number) =>
-  `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(Math.round(min % 60)).padStart(2, '0')}`;

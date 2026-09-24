@@ -91,12 +91,9 @@ function sidecar(grid: Grid, snap: Snapshot, motion: Motion, colours: Colours, p
     /** Wallpaper options; ink / paper null = Typist's invert rule, surround null = paper. */
     wallpaper: snap.wall,
     colours,
-    /**
-     * What the shell plugin plays: effects this style cannot play are off, night colours resolved.
-     * Night start / end are minutes since midnight, fade is minutes.
-     */
+    /** What the shell plugin plays: effects this style cannot play are off. */
     motion,
-    /** The Motion tab as it was left (reopening restores it; null night colours = swapped). */
+    /** The Motion tab as it was left (reopening restores it). */
     motionSettings: snap.motion,
     /** The dot field (Dots only): one texel per dot, see motion.ts packField. */
     field: grid.field ? { file: fieldFile(pngPath), width: grid.field.width, height: grid.field.height } : null,
@@ -137,7 +134,7 @@ export async function save(): Promise<string | null> {
     // everything is read before the first await: an edit during the save belongs to the next one
     const snap = app.snapshot();
     const colours = { ...app.colours };
-    const motion = motionFor(snap.motion, supportFor(snap.doc), colours);
+    const motion = motionFor(snap.motion, supportFor(snap.doc));
     const name = app.loaded.name;
     const grid = await currentGrid();
     const { width, height } = snap.wall;

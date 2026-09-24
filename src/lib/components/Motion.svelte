@@ -3,11 +3,10 @@
   // still). Each effect keeps its settings when the style cannot play it, so switching back to
   // Dots or Ordered brings it back. The preview plays what will be saved (pipeline.previewMotion).
   import { COLS_MAX, COLS_MIN } from '../layout';
-  import { anyMotion, defaultMotion, hhmm, motionFps, nightColours, type BatteryRule, type Motion, type Rate } from '../motion';
+  import { anyMotion, columnRate, defaultMotion, motionFps, type BatteryRule, type Motion, type Rate } from '../motion';
   import { currentPlan, previewMotion } from '../pipeline';
   import { app } from '../state.svelte';
   import Icon from './Icon.svelte';
-  import RisoInks from './RisoInks.svelte';
   import Seg from './Seg.svelte';
   import Slider from './Slider.svelte';
   import Switch from './Switch.svelte';
@@ -17,15 +16,14 @@
   const s = $derived(app.support);
   const saved = $derived(previewMotion());
   const fps = $derived(motionFps(saved));
-  const night = $derived(nightColours(m, app.colours));
 
   const pct = (v: number) => `${Math.round(v * 1000) / 10}%`;
   const perSec = (v: number) => `${v}/s`;
   const secs = (v: number) => (v >= 120 ? `${Math.round(v / 6) / 10} min` : `${Math.round(v)} s`);
 
-  type Effect = 'twinkle' | 'shimmer' | 'pan' | 'day' | 'columns';
+  type Effect = 'twinkle' | 'shimmer' | 'pan' | 'columns';
   const NAMES: Record<Effect, string> = {
-    twinkle: 'Twinkle', shimmer: 'Shimmer', pan: 'Pan and zoom', day: 'Colour over the day', columns: 'Columns',
+    twinkle: 'Twinkle', shimmer: 'Shimmer', pan: 'Pan and zoom', columns: 'Columns',
   };
 
   function toggle(e: Effect, on: boolean) {
@@ -64,6 +62,8 @@
   }
 
   const plan = $derived(m.columns.on && s.letters ? currentPlan() : null);
+  /** Each keyframe's time (motion.ts columnRate). */
+  const stepMs = (n: number, period: number) => Math.round(1000 / Math.max(columnRate(n, period), 1e-3));
 
   function useOrdered() {
     app.doc.dither = 'bayer';
@@ -77,32 +77,11 @@
     app.commit('Pattern');
   }
 
-  const toMinutes = (v: string) => {
-    const [h, mm] = v.split(':').map(Number);
-    return Number.isFinite(h) && Number.isFinite(mm) ? (((h! * 60 + mm!) % 1440) + 1440) % 1440 : null;
-  };
-
-  function setTime(k: 'nightStart' | 'nightEnd', raw: string) {
-    const v = toMinutes(raw);
-    if (v == null || v === app.motion.day[k]) return;
-    app.motion.day[k] = v;
-    app.commit(k === 'nightStart' ? 'Night starts' : 'Night ends');
-  }
-
-  const nowMinute = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
-  let clock = $state(nowMinute());
-  $effect(() => {
-    const t = setInterval(() => (clock = nowMinute()), 30000);
-    return () => clearInterval(t);
-  });
-  const shownMinute = $derived(app.previewMinute ?? clock);
-
   const status = $derived.by(() => {
     const p = app.framesProgress;
     if (saved.columns.on && p) return `Rendering frames ${p.done}/${p.total}…`;
     if (!anyMotion(saved)) return anyMotion(m) ? 'This style cannot play the chosen effects' : 'No motion: the wallpaper stays still';
-    if (fps > 0) return `Animated at ${fps} fps`;
-    return 'Still between colour changes';
+    return `Animated at ${Math.round(fps * 10) / 10} fps`;
   });
 </script>
 
@@ -210,67 +189,16 @@
           </label>
         {/each}
       </div>
-      <Slider label="Frame rate" min={2} max={30} step={1} value={m.columns.fps} def={DEF.columns.fps}
-        format={v => `${v} fps`} {...slide('columns', 'fps', 'Columns frame rate')} />
+      <Slider label="Smoothness" min={4} max={600} step={1} value={m.columns.frames} def={DEF.columns.frames}
+        format={v => `${v} frames`} {...slide('columns', 'frames', 'Columns smoothness')} />
       <Slider label="One cycle" min={2} max={600} step={1} value={m.columns.period} def={DEF.columns.period}
         format={secs} {...slide('columns', 'period', 'Columns cycle')} />
       {#if plan}
-        <p class="hint">{plan.cols.length} frames from {plan.cols[0]} to {plan.cols[plan.cols.length - 1]} columns,
-          there and back. It starts on the saved picture's {app.cols} columns{plan.cols.includes(app.cols) ? '' : ' (outside the range: the nearer end)'}.
-          {#if plan.capped}Fewer frames than the frame rate asks for: all of them must fit one texture. A shorter cycle or a lower To keeps it smooth.{/if}</p>
+        <p class="hint">{plan.cols.length} frames from {plan.cols[0]} to {plan.cols[plan.cols.length - 1]} columns
+          and back, a new one every {stepMs(plan.cols.length, m.columns.period)} ms. More frames take longer to
+          render; a new frame more often costs more battery. It starts on the saved picture's {app.cols} columns{plan.cols.includes(app.cols) ? '' : ' (outside the range: the nearer end)'}.
+          {#if plan.capped}Fewer frames than Smoothness asks for: all of them must fit one texture. A lower To makes room for more.{/if}</p>
       {/if}
-    {/if}
-  </div>
-</div>
-
-<div class="field">
-  <div class="label">Colours</div>
-  <div class="fx">
-    <Switch label="Colour over the day" checked={m.day.on && s.mono} disabled={!s.mono}
-      hint={s.mono ? 'Ink and paper turn to night colours after dark' : 'Colour blocks take their colours from the photo'}
-      onchange={on => toggle('day', on)} />
-    {#if m.day.on && s.mono}
-      <div class="colours">
-        <label class="swatch" title="Ink at night">
-          <input type="color" value={night.ink}
-            oninput={e => { app.motion.day.nightInk = e.currentTarget.value; }}
-            onchange={e => { app.motion.day.nightInk = e.currentTarget.value; app.commit('Night ink'); }} />
-          <span>Night ink</span>
-          <span class="num dim">{night.ink}</span>
-        </label>
-        <label class="swatch" title="Paper at night">
-          <input type="color" value={night.paper}
-            oninput={e => { app.motion.day.nightPaper = e.currentTarget.value; }}
-            onchange={e => { app.motion.day.nightPaper = e.currentTarget.value; app.commit('Night paper'); }} />
-          <span>Night paper</span>
-          <span class="num dim">{night.paper}</span>
-        </label>
-      </div>
-      <RisoInks label="Riso inks for the night" ink={night.ink} paper={night.paper}
-        onpick={p => { app.motion.day.nightInk = p.ink; app.motion.day.nightPaper = p.paper; app.commit('Night colours'); }} />
-      <button type="button" class="small" disabled={m.day.nightInk == null && m.day.nightPaper == null}
-        title="Night is the day's ink and paper swapped: a negative of the day picture"
-        onclick={() => { app.motion.day.nightInk = null; app.motion.day.nightPaper = null; app.commit('Night colours'); }}>
-        <Icon name="reset" size={14} /> Swap the day colours
-      </button>
-      <div class="times">
-        <label>
-          <span class="dim">Night from</span>
-          <input type="time" value={hhmm(m.day.nightStart)} onchange={e => setTime('nightStart', e.currentTarget.value)} />
-        </label>
-        <label>
-          <span class="dim">to</span>
-          <input type="time" value={hhmm(m.day.nightEnd)} onchange={e => setTime('nightEnd', e.currentTarget.value)} />
-        </label>
-      </div>
-      <Slider label="Fade" min={0} max={240} step={5} value={m.day.fade} def={DEF.day.fade}
-        format={v => (v ? `${v} min` : 'none')} {...slide('day', 'fade', 'Fade')} />
-      <div class="scrub">
-        <Slider label="Preview at" min={0} max={1435} step={5} value={shownMinute} def={clock} format={hhmm}
-          oninput={v => { app.previewMinute = v; }} oncommit={v => { app.previewMinute = v; }} />
-        <button type="button" class="small" aria-pressed={app.previewMinute == null}
-          title="Show the colours of the current time" onclick={() => (app.previewMinute = null)}>Now</button>
-      </div>
     {/if}
   </div>
 </div>
@@ -308,7 +236,7 @@
   .fx { display: flex; flex-direction: column; gap: 4px; }
   .fx + .fx { border-top: 1px solid var(--border); padding-top: 4px; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .row button, .small { height: 26px; font-size: 12px; }
+  .row button { height: 26px; font-size: 12px; }
   .dim { color: var(--text-muted); }
   p { margin: 0; }
   .need {
@@ -332,49 +260,8 @@
     font-size: inherit;
   }
   .link:hover:not(:disabled) { background: none; }
-  .colours { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  .swatch {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    grid-template-rows: auto auto;
-    column-gap: 8px;
-    align-items: center;
-    padding: 5px 8px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-ctl);
-    background: var(--surface);
-    cursor: pointer;
-  }
-  .swatch input {
-    grid-row: span 2;
-    width: 26px;
-    height: 26px;
-    padding: 0;
-    border: 1px solid var(--border-strong);
-    border-radius: 5px;
-    background: none;
-    cursor: inherit;
-  }
-  .swatch input::-webkit-color-swatch-wrapper { padding: 0; }
-  .swatch input::-webkit-color-swatch { border: 0; border-radius: 4px; }
-  .swatch .num { font-size: 11px; }
-  .times { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  .times label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
-  input[type='time'] {
-    height: 28px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-ctl);
-    background: var(--surface);
-    padding: 0 8px;
-    font-family: var(--mono);
-    font-size: 12px;
-    user-select: text;
-    -webkit-user-select: text;
-  }
   .ends { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .ends label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
   .ends input { height: 28px; font-size: 13px; text-align: right; }
-  .scrub { display: flex; align-items: flex-end; gap: 8px; }
-  .scrub > :global(.slider) { flex: 1; }
   .sub { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
 </style>

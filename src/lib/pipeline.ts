@@ -8,7 +8,7 @@ import { LOOKS, type LookId } from '$typist/tone.js';
 import { cellAspect, Engine, rowsFor, THUMB_COLS, type ConvertRequest } from './engine/engine';
 import { layoutArt, type Layout } from './layout';
 import {
-  cleanMotion, coloursAt, columnFrameAt, columnPlan, columnStart, dotMotion, frameGrid, motionFps, packField,
+  cleanMotion, columnFrameAt, columnPlan, columnStart, dotMotion, frameGrid, motionFps, packField,
   type Motion,
 } from './motion';
 import { perf } from './perf.svelte';
@@ -127,7 +127,7 @@ export function drawPreview() {
   const ctx = c.getContext('2d');
   if (!ctx) return;
   const t0 = performance.now();
-  const colours = previewColours();
+  const colours = app.colours;
   if (app.peeking) {
     const layout = layoutFor(g, c.width, c.height);
     drawPhotoCrop(ctx, loaded.photo.canvas, app.crop, layout, colours.paper, c.width, c.height, colours.surround);
@@ -154,8 +154,8 @@ let epoch = performance.now();
 function previewGrid(g: Grid): Grid {
   const m = previewMotion();
   if (m.columns.on) {
-    const k = app.playing && frames && frames.key === framesKey() ? frames : null;
-    if (!k || k.grids.length !== k.cols.length) return g;
+    const k = app.playing ? playable() : null;
+    if (!k) return g;
     const t = (performance.now() - epoch) / 1000;
     return k.grids[columnFrameAt(t, k.cols.length, m.columns.period, k.start)]!;
   }
@@ -167,10 +167,13 @@ function previewGrid(g: Grid): Grid {
 }
 
 // Columns (Letters): the engine converts the photo at every keyframe's column count on a pool of
-// workers (Engine.frames), after the preview is drawn. The preview plays them once all are in;
-// Save waits for the same batch.
+// workers (Engine.frames), after the preview is drawn. Converted counts are kept, so a new From,
+// To or Smoothness converts only the counts it adds, and One cycle (only the pace) converts
+// nothing. The preview plays the last complete set while a new one builds; Save waits for it.
 
 interface FrameBatch {
+  /** cacheKey (the picture) and framesKey. */
+  base: string;
   key: string;
   cols: number[];
   start: number;
@@ -178,14 +181,29 @@ interface FrameBatch {
   done: Promise<Grid[] | null>;
 }
 
+/** The batch for the current settings (maybe building) and the last complete one (playing). */
 let frames: FrameBatch | null = null;
+let shown: FrameBatch | null = null;
+/** Converted keyframes by column count, for `cacheKey`'s photo and options. */
+let cache = { key: '', grids: new Map<number, Grid>() };
 
-/** Everything the keyframes depend on. */
+/** Everything a keyframe depends on but its column count. */
+function cacheKey(): string {
+  const { crop, opts } = currentRequest();
+  return JSON.stringify([app.loaded?.path, crop, { ...opts, cols: 0, rows: 0, field: false }, app.cropAspect]);
+}
+
+/** Everything the set of keyframes depends on (not the cycle: that is only the pace). */
 function framesKey(): string {
   const m = app.playMotion.columns;
-  const { crop, opts } = currentRequest();
-  return JSON.stringify([app.loaded?.path, crop, { ...opts, cols: 0, rows: 0, field: false }, app.cropAspect,
-    m.from, m.to, m.fps, m.period, app.cols]);
+  return JSON.stringify([cacheKey(), m.from, m.to, m.frames, app.cols]);
+}
+
+/** The complete keyframes to play: the current ones, or the last set of this picture while they build. */
+function playable(): FrameBatch | null {
+  const base = cacheKey();
+  for (const b of [frames, shown]) if (b?.grids.length && b.base === base) return b;
+  return null;
 }
 
 /** The keyframes' column counts for the current settings (and whether the cell budget cut them). */
@@ -194,28 +212,45 @@ export const currentPlan = () =>
 
 /** Start building the keyframes for the current settings, if Columns is on and they are not built. */
 function syncFrames() {
+  const base = cacheKey();
+  if (cache.key !== base) cache = { key: base, grids: new Map() };
   if (!app.loaded || !app.playMotion.columns.on) {
-    if (frames) { frames = null; engine.frames.cancel(); app.framesProgress = null; }
+    if (frames) { frames = null; shown = null; engine.frames.cancel(); app.framesProgress = null; }
     return;
   }
   const key = framesKey();
   if (frames?.key === key) return;
   const { cols } = currentPlan();
-  const { crop, opts } = currentRequest();
-  const reqs = cols.map(c => ({ crop, opts: { ...opts, cols: c, rows: rowsFor(c, opts.mode, app.cropAspect), field: false } }));
-  const batch: FrameBatch = { key, cols, start: columnStart(cols, app.cols), grids: [], done: Promise.resolve(null) };
+  const batch: FrameBatch = { base, key, cols, start: columnStart(cols, app.cols), grids: [], done: Promise.resolve(null) };
+  if (frames?.grids.length) shown = frames;
   frames = batch;
-  app.framesProgress = { done: 0, total: cols.length };
-  let n = 0;
-  batch.done = engine.frames.run(reqs, () => {
-    if (frames === batch) app.framesProgress = { done: ++n, total: cols.length };
-  }).then(grids => {
-    if (frames !== batch || !grids) return null;
-    batch.grids = grids;
+  const have = cache.grids;
+  const finish = () => {
+    batch.grids = cols.map(c => have.get(c)!);
+    // keep what this set and the one still playing use
+    const keep = new Set([...cols, ...(shown?.cols ?? [])]);
+    for (const c of have.keys()) if (!keep.has(c)) have.delete(c);
+    shown = batch;
     app.framesProgress = null;
     schedule();
-    return grids;
-  }, e => {
+    return batch.grids;
+  };
+  const missing = cols.filter(c => !have.has(c));
+  if (!missing.length) {
+    engine.frames.cancel();
+    finish();
+    batch.done = Promise.resolve(batch.grids);
+    return;
+  }
+  const { crop, opts } = currentRequest();
+  const reqs = missing.map(c => ({ crop, opts: { ...opts, cols: c, rows: rowsFor(c, opts.mode, app.cropAspect), field: false } }));
+  let n = cols.length - missing.length;
+  app.framesProgress = { done: n, total: cols.length };
+  batch.done = engine.frames.run(reqs, (i, grid) => {
+    if (cache.grids !== have) return;
+    have.set(missing[i]!, grid);
+    if (frames === batch) app.framesProgress = { done: ++n, total: cols.length };
+  }).then(grids => (frames !== batch || !grids ? null : finish()), e => {
     if (frames === batch) { frames = null; app.framesProgress = null; }
     throw e;
   });
@@ -233,17 +268,7 @@ export async function columnFrames(): Promise<{ cols: number[]; start: number; g
   }
 }
 
-function previewColours(): Colours {
-  const m = previewMotion();
-  if (!m.day.on) return app.colours;
-  const now = new Date();
-  return coloursAt(m, app.colours, app.previewMinute ?? now.getHours() * 60 + now.getMinutes());
-}
-
-/**
- * Start, retime or stop the preview's motion frames (after any motion or play change). With only
- * Colour over the day on, a redraw every 30 s follows the clock.
- */
+/** Start, retime or stop the preview's motion frames (after any motion or play change). */
 export function syncMotion(restart = false) {
   const m = previewMotion();
   const fps = app.playing && app.loaded ? motionFps(m) : 0;
@@ -252,16 +277,15 @@ export function syncMotion(restart = false) {
   // Columns looks every display frame and draws only when the keyframe changes, so each keyframe
   // shows for its own time (a timer at the keyframe rate would beat against the changes)
   motionTimer = fps > 0 && m.columns.on ? window.setInterval(columnsTick, 16)
-    : fps > 0 ? window.setInterval(schedule, 1000 / fps)
-    : m.day.on && app.loaded ? window.setInterval(schedule, 30000) : 0;
+    : fps > 0 ? window.setInterval(schedule, 1000 / fps) : 0;
   schedule();
 }
 
 let lastKeyframe = -1;
 
 function columnsTick() {
-  const k = frames;
-  if (!k || k.grids.length !== k.cols.length) return;
+  const k = playable();
+  if (!k) return;
   const i = columnFrameAt((performance.now() - epoch) / 1000, k.cols.length, previewMotion().columns.period, k.start);
   if (i === lastKeyframe) return;
   lastKeyframe = i;

@@ -155,8 +155,6 @@ class AppState {
   playing = $state(true);
   /** Columns keyframes built so far for the current settings (null: none being built). */
   framesProgress: { done: number; total: number } | null = $state.raw(null);
-  /** Minute of the day the preview shows Colour over the day at (null = now). */
-  previewMinute: number | null = $state(null);
   loaded: LoadedPhoto | null = $state.raw(null);
   grid: Grid | null = $state.raw(null);
   /** Last main conversion time (ms). */
@@ -211,7 +209,7 @@ class AppState {
   });
 
   /** The motion as it plays and is saved: effects this style cannot play are off. */
-  playMotion: Motion = $derived(motionFor(this.motion, this.support, this.colours));
+  playMotion: Motion = $derived(motionFor(this.motion, this.support));
 
   /**
    * The wallpaper file these settings were last saved to (or reopened from): `key` is everything

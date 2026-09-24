@@ -1,9 +1,6 @@
 // Stipple's animated wallpaper, one full-screen pass.
 //
 // Two ways to draw:
-//   mode 0  recolour: the saved PNG, re-inked. Every mono PNG is paper + ink * coverage, so the
-//           coverage comes back from the pixel and is mixed with the colours of the hour. Any
-//           style; used when only Colour over the day is on.
 //   mode 1  dots: the Braille lattice drawn from the field texture (one texel per dot):
 //             R  the saved dot (255 = raised), exactly what the PNG shows
 //             G  ink amount 1 - L, quantised so an Ordered threshold picks the same dots
@@ -17,8 +14,7 @@
 //           Glyphs overhang their cell, so a pixel looks at its cell and the 8 around it. The two
 //           levels nearest the cell height are blended (lvMix). See src/lib/letterframes.ts.
 //
-// Outside the art's rectangle (the margin, or around an art box) is the surround colour, which is
-// never recoloured unless it is the paper's.
+// Outside the art's rectangle (the margin, or around an art box) is the surround colour.
 //
 // The geometry is src/lib/rasterize.ts's: dot centres on a regular lattice snapped to quarter
 // pixels, radius min(dotR * pitchX, 0.46 * pitch). src/lib/motion.ts mirrors every formula here
@@ -34,8 +30,6 @@ layout(std140, binding = 0) uniform buf {
     float qt_Opacity;
     vec4 ink;        // colours to draw with
     vec4 paper;
-    vec4 srcInk;     // colours the PNG was drawn with (mode 0)
-    vec4 srcPaper;
     vec4 canvas;     // wallpaper width, height, mode, seed
     vec4 map;        // wallpaper px = uv * map.xy + map.zw
     vec4 lattice;    // grid origin x, y, dot pitch x, y
@@ -54,7 +48,6 @@ layout(std140, binding = 0) uniform buf {
 };
 
 layout(binding = 1) uniform sampler2D fieldTex;
-layout(binding = 2) uniform sampler2D artTex;
 layout(binding = 3) uniform sampler2D framesTex;
 layout(binding = 4) uniform sampler2D glyphTex;
 
@@ -162,11 +155,6 @@ void main() {
     vec3 col;
     if (wp.x < inner.x || wp.y < inner.y || wp.x >= inner.z || wp.y >= inner.w) {
         col = surround.rgb;
-    } else if (canvas.z < 0.5) {
-        vec3 c = texture(artTex, wp / canvas.xy).rgb;
-        vec3 d = srcInk.rgb - srcPaper.rgb;
-        float k = clamp(dot(c - srcPaper.rgb, d) / max(dot(d, d), 1e-6), 0.0, 1.0);
-        col = mix(paper.rgb, ink.rgb, k);
     } else if (canvas.z > 1.5) {
         float cov = 0.0;
         if (wp.x >= clipRect.x && wp.y >= clipRect.y && wp.x < clipRect.z && wp.y < clipRect.w) cov = lettersCov(wp);

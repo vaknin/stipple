@@ -4,7 +4,7 @@ import { createConverter, type DotField } from '$typist/convert.js';
 import { ditherDots, encodeBraille } from '$typist/dither.js';
 import { COLS_MAX, COLS_MIN } from './layout';
 import {
-  cleanMotion, coloursAt, COLUMN_CELLS_MAX, columnFrameAt, columnKeyframes, columnPlan, columnStart, defaultMotion, frameDots, frameGrid, hash, motionFor, motionFps, nightColours, nightWeight, packField,
+  cleanMotion, COLUMN_CELLS_MAX, columnFrameAt, columnKeyframes, columnPlan, columnRate, columnStart, defaultMotion, frameDots, frameGrid, hash, motionFor, motionFps, packField,
   type Motion,
 } from './motion';
 
@@ -137,64 +137,19 @@ describe('shader mirror', () => {
 describe('settings', () => {
   test('frame rate', () => {
     expect(motionFps(defaultMotion())).toBe(0);
-    expect(motionFps(with_(m => { m.day.on = true; }))).toBe(0);
     expect(motionFps(with_(m => { m.twinkle.on = true; m.twinkle.rate = 6; }))).toBe(6);
     expect(motionFps(with_(m => { m.twinkle.on = m.shimmer.on = true; m.twinkle.rate = 6; m.shimmer.rate = 9; }))).toBe(9);
     expect(motionFps(with_(m => { m.twinkle.on = m.pan.on = true; m.pan.fps = 12; }))).toBe(12);
   });
 
-  test('motionFor keeps only what the style can play and resolves the night colours', () => {
-    const all = with_(m => { m.twinkle.on = m.shimmer.on = m.pan.on = m.day.on = true; });
-    const c = { ink: '#111111', paper: '#eeeeee' };
-    const on = (m: Motion) => [m.twinkle.on, m.shimmer.on, m.pan.on, m.day.on];
-    expect(on(motionFor(all, { dots: true, ordered: true, mono: true, letters: false }, c))).toEqual([true, true, true, true]);
-    expect(on(motionFor(all, { dots: true, ordered: false, mono: true, letters: false }, c))).toEqual([true, false, false, true]);
-    expect(on(motionFor(all, { dots: false, ordered: false, mono: true, letters: false }, c))).toEqual([false, false, false, true]);
-    expect(on(motionFor(all, { dots: false, ordered: false, mono: false, letters: false }, c))).toEqual([false, false, false, false]);
-    const m = motionFor(all, { dots: true, ordered: true, mono: true, letters: false }, c);
-    expect([m.day.nightInk, m.day.nightPaper]).toEqual(['#eeeeee', '#111111']);
-    all.day.nightInk = '#ff0000';
-    expect(nightColours(all, c)).toEqual({ ink: '#ff0000', paper: '#111111' });
-  });
-});
-
-describe('colour over the day', () => {
-  const S = 19 * 60, E = 7 * 60;
-
-  test('day and night', () => {
-    expect(nightWeight(12 * 60, S, E, 60)).toBe(0);
-    expect(nightWeight(0, S, E, 60)).toBe(1);
-    expect(nightWeight(S, S, E, 60)).toBe(0.5);
-    expect(nightWeight(E, S, E, 60)).toBe(0.5);
-    expect(nightWeight(S - 30, S, E, 60)).toBe(0);
-    expect(nightWeight(S + 30, S, E, 60)).toBe(1);
-    expect(nightWeight(S + 15, S, E, 60)).toBe(0.75);
-    expect(nightWeight(E - 15, S, E, 60)).toBe(0.75);
-    // a night inside one day, and no fade
-    expect(nightWeight(3 * 60, 60, 5 * 60, 0)).toBe(1);
-    expect(nightWeight(6 * 60, 60, 5 * 60, 0)).toBe(0);
-  });
-
-  test('the weight is continuous round the clock', () => {
-    for (const [s, e, fade] of [[S, E, 60], [S, E, 180], [60, 300, 30], [0, 720, 120]] as const) {
-      for (let m = 0; m < 1440; m++) {
-        const a = nightWeight(m, s, e, fade), b = nightWeight((m + 1) % 1440, s, e, fade);
-        expect(a).toBeGreaterThanOrEqual(0);
-        expect(a).toBeLessThanOrEqual(1);
-        expect(Math.abs(a - b)).toBeLessThanOrEqual(1 / fade + 1e-9);
-      }
-    }
-  });
-
-  test('colours mix, a custom surround stays', () => {
-    const m = with_(m => { m.day.on = true; m.day.fade = 0; });
-    const c = { ink: '#000000', paper: '#ffffff', surround: '#123456' };
-    expect(coloursAt(m, c, 12 * 60)).toEqual({ ink: '#000000', paper: '#ffffff', surround: '#123456' });
-    expect(coloursAt(m, c, 0)).toEqual({ ink: '#ffffff', paper: '#000000', surround: '#123456' });
-    expect(coloursAt(m, { ink: '#000000', paper: '#ffffff' }, 0).surround).toBe('#000000');
-    m.day.fade = 60;
-    expect(coloursAt(m, c, S).ink).toBe('#808080');
-    expect(coloursAt(defaultMotion(), c, 0)).toBe(c);
+  test('motionFor keeps only what the style can play', () => {
+    const all = with_(m => { m.twinkle.on = m.shimmer.on = m.pan.on = true; });
+    const on = (m: Motion) => [m.twinkle.on, m.shimmer.on, m.pan.on];
+    expect(on(motionFor(all, { dots: true, ordered: true, letters: false }))).toEqual([true, true, true]);
+    expect(on(motionFor(all, { dots: true, ordered: false, letters: false }))).toEqual([true, false, false]);
+    expect(on(motionFor(all, { dots: false, ordered: false, letters: false }))).toEqual([false, false, false]);
+    // an older sidecar's Colour over the day is dropped
+    expect('day' in cleanMotion({ day: { on: true } })).toBe(false);
   });
 });
 
@@ -234,22 +189,31 @@ describe('columns', () => {
   });
 
   test('frame rate, style support and older sidecars', () => {
-    const m = with_(x => { x.columns.on = true; x.columns.fps = 12; });
+    const m = with_(x => { x.columns.on = true; x.columns.frames = 121; x.columns.period = 20; });
     expect(motionFps(m)).toBe(12);
-    const c = { ink: '#111111', paper: '#eeeeee' };
-    expect(motionFor(m, { dots: false, ordered: false, mono: true, letters: true }, c).columns.on).toBe(true);
-    expect(motionFor(m, { dots: true, ordered: true, mono: true, letters: false }, c).columns.on).toBe(false);
+    expect(columnRate(1, 20)).toBe(0);
+    expect(motionFor(m, { dots: false, ordered: false, letters: true }).columns.on).toBe(true);
+    expect(motionFor(m, { dots: true, ordered: true, letters: false }).columns.on).toBe(false);
     expect(cleanMotion({ twinkle: { on: true } }).columns).toEqual(defaultMotion().columns);
+    // the first release saved a frame rate: the frames it asked for
+    const old = cleanMotion({ columns: { on: true, from: 10, to: 500, fps: 15, period: 20 } }).columns;
+    expect(old).toEqual({ on: true, from: 10, to: 500, frames: 151, period: 20 });
   });
 
-  test('a plan makes a keyframe per frame, capped by the cells', () => {
+  test('a plan makes the frames asked for, capped by the cells', () => {
     const rows = (k: number) => Math.round(k * 0.46);
-    const p = columnPlan({ on: true, from: 10, to: 500, fps: 15, period: 20 }, 156, rows);
-    expect(p.capped).toBe(false);
-    // 151 geometric steps, fewer where whole numbers collide near 10 columns
-    expect(p.cols.length).toBeGreaterThan(120);
-    expect(p.cols.length).toBeLessThanOrEqual(152);
-    const big = columnPlan({ on: true, from: 10, to: 4096, fps: 30, period: 600 }, 156, rows);
+    for (const frames of [2, 50, 130, 400]) {
+      const p = columnPlan({ from: 10, to: 500, frames }, 156, rows);
+      expect(p.capped).toBe(false);
+      // the saved count may add one
+      expect(p.cols.length - frames).toBeGreaterThanOrEqual(0);
+      expect(p.cols.length - frames).toBeLessThanOrEqual(1);
+      expect(p.cols[0]).toBe(10);
+      expect(p.cols[p.cols.length - 1]).toBe(500);
+    }
+    // a range with fewer whole numbers than asked for: all of them
+    expect(columnPlan({ from: 10, to: 12, frames: 50 }, 11, rows).cols).toEqual([10, 11, 12]);
+    const big = columnPlan({ from: 10, to: 4096, frames: 600 }, 156, rows);
     expect(big.capped).toBe(true);
     expect(big.cells).toBeLessThanOrEqual(COLUMN_CELLS_MAX);
   });

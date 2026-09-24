@@ -1,14 +1,15 @@
 <script lang="ts" module>
-  // Ink and paper pairs from risograph inks (close approximations of the named inks) on cream
-  // paper, plus two light-on-dark pairs that suit Colour over the day's night.
+  // Ink and paper pairs from risograph inks (close approximations of the named inks), light on
+  // dark paper to suit a desktop's dark theme.
   export interface InkPair { name: string; ink: string; paper: string }
+  const BLACK = '#141416';
   export const RISO_INKS: readonly InkPair[] = [
-    { name: 'Blue on cream', ink: '#0078bf', paper: '#f2ede3' },
-    { name: 'Teal on cream', ink: '#00838a', paper: '#f2ede3' },
-    { name: 'Fluorescent pink on cream', ink: '#ff48b0', paper: '#f2ede3' },
-    { name: 'Purple on cream', ink: '#765ba7', paper: '#f2ede3' },
-    { name: 'Green on cream', ink: '#00a95c', paper: '#f2ede3' },
-    { name: 'Burgundy on cream', ink: '#914e72', paper: '#f2ede3' },
+    { name: 'Fluorescent pink on black', ink: '#ff48b0', paper: BLACK },
+    { name: 'Yellow on black', ink: '#ffe800', paper: BLACK },
+    { name: 'Aqua on black', ink: '#5ec8e5', paper: BLACK },
+    { name: 'Mint on black', ink: '#82d8d5', paper: BLACK },
+    { name: 'Orange on black', ink: '#ff6c2f', paper: BLACK },
+    { name: 'Cornflower on black', ink: '#62a8e5', paper: BLACK },
     { name: 'Yellow on blue', ink: '#ffe800', paper: '#1d3b6a' },
     { name: 'Pink on midnight', ink: '#ff48b0', paper: '#1b1d2e' },
   ];

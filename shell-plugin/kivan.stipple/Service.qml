@@ -43,8 +43,6 @@ Item {
   property bool paused: false
   /** Dev only (`stipple at`): show this time (s) instead of the clock's, when >= 0. */
   property real frozen: -1
-  /** Minutes since midnight, for Colour over the day. */
-  property int minuteNow: 0
 
   readonly property bool isPng: /\.png$/i.test(root.current)
   readonly property string stem: root.isPng ? root.current.replace(/^.*\//, "").replace(/\.png$/i, "") : ""
@@ -84,59 +82,18 @@ Item {
 
   // -------------------------------------------------------------------- colours
 
-  function hexRgb(h) {
-    const n = parseInt(String(h).replace("#", ""), 16) || 0
-    return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
-  }
-
-  function mixHex(a, b, t) {
-    const x = hexRgb(a), y = hexRgb(b)
-    const c = i => Math.round(x[i] + (y[i] - x[i]) * t)
-    return Qt.rgba(c(0) / 255, c(1) / 255, c(2) / 255, 1)
-  }
-
-  /** 0 by day, 1 by night, ramping over `fade` minutes centred on each boundary (motion.ts nightWeight). */
-  function nightWeight(m, start, end, fade) {
-    const fwd = (a, b) => (((a - b) % 1440) + 1440) % 1440
-    const inside = start <= end ? (m >= start && m < end) : (m >= start || m < end)
-    if (fade > 0) {
-      const h = fade / 2, s = fwd(m, start), e = fwd(m, end)
-      if (s < h) return 0.5 + s / fade
-      if (1440 - s <= h) return 0.5 - (1440 - s) / fade
-      if (e < h) return 0.5 - e / fade
-      if (1440 - e <= h) return 0.5 + (1440 - e) / fade
-    }
-    return inside ? 1 : 0
-  }
-
-  readonly property real night: {
-    const d = root.motion ? root.motion.day : null
-    if (!d || !d.on) return 0
-    return root.nightWeight(root.minuteNow, d.nightStart, d.nightEnd, d.fade)
-  }
-  readonly property color ink: root.spec && root.motion ? root.mixHex(root.spec.colours.ink, root.motion.day.nightInk, root.night) : "black"
-  readonly property color paper: root.spec && root.motion ? root.mixHex(root.spec.colours.paper, root.motion.day.nightPaper, root.night) : "white"
-  // a surround of its own stays put; one that is the paper follows the paper (motion.ts coloursAt)
+  readonly property color ink: root.spec ? root.spec.colours.ink : "black"
+  readonly property color paper: root.spec ? root.spec.colours.paper : "white"
+  // the surround: its own colour, or the paper's
   readonly property color surround: {
     const c = root.spec ? root.spec.colours : null
     const own = !!c && !!c.surround && String(c.surround).toLowerCase() !== String(c.paper).toLowerCase()
     return own ? c.surround : root.paper
   }
 
-  Timer {
-    interval: 30000
-    repeat: true
-    running: !!root.motion && root.motion.day.on
-    triggeredOnStart: true
-    onTriggered: {
-      const d = new Date()
-      root.minuteNow = d.getHours() * 60 + d.getMinutes()
-    }
-  }
-
   // ------------------------------------------------------------------ frame rate
 
-  /** Frames per second the effects ask for (0: nothing moves between colour updates). */
+  /** Frames per second the effects ask for (0: nothing moves). */
   readonly property real baseFps: {
     const m = root.motion
     // Columns: a new keyframe every period / (2 (n - 1)) s, ticked four times as often so each
@@ -306,7 +263,7 @@ Item {
     let s = null
     try { s = JSON.parse(raw) } catch (e) { s = null }
     const m = s && s.motion
-    const on = !!m && (m.twinkle.on || m.shimmer.on || m.pan.on || m.day.on || (!!m.columns && m.columns.on))
+    const on = !!m && (m.twinkle.on || m.shimmer.on || m.pan.on || (!!m.columns && m.columns.on))
     const colourBlocks = !!s && !!s.grid && !!s.grid.fg
     if (!s || !/^stipple\//.test(String(s.format)) || !on || colourBlocks) {
       root.spec = null
@@ -341,7 +298,7 @@ Item {
         paused: root.paused,
         idle: root.idle,
         onBattery: UPower.onBattery,
-        screens: surfaces.instances.map(w => ({ name: w.screen ? w.screen.name : "", shown: w.visible, art: w.artStatus, field: w.fieldStatus, fps: w.fps, keyframe: w.keyframe, fullscreen: w.fullscreen, windows: w.hasWindows, covered: Math.round(w.covered * 1000) / 1000, frames: w.frameCount })),
+        screens: surfaces.instances.map(w => ({ name: w.screen ? w.screen.name : "", shown: w.visible, field: w.fieldStatus, fps: w.fps, keyframe: w.keyframe, fullscreen: w.fullscreen, windows: w.hasWindows, covered: Math.round(w.covered * 1000) / 1000, frames: w.frameCount })),
       })
     }
 
@@ -365,9 +322,8 @@ Item {
       required property var modelData
 
       screen: modelData
-      readonly property int artStatus: artImg.status
       readonly property int fieldStatus: fieldImg.status
-      readonly property bool ready: artImg.status === Image.Ready && (!root.dots || fieldImg.status === Image.Ready)
+      readonly property bool ready: (!root.dots || fieldImg.status === Image.Ready)
         && (!root.letters || (framesImg.status === Image.Ready && glyphsImg.status === Image.Ready))
       visible: !!root.spec && ready
       color: root.paper
@@ -439,15 +395,6 @@ Item {
       }
 
       Image {
-        id: artImg
-        visible: false
-        asynchronous: false
-        cache: false
-        smooth: true
-        source: root.spec ? "file://" + encodeURI(root.current) + "?v=" + root.version : ""
-      }
-
-      Image {
         id: fieldImg
         visible: false
         asynchronous: false
@@ -487,9 +434,7 @@ Item {
 
         property color ink: root.ink
         property color paper: root.paper
-        property color srcInk: sp ? sp.colours.ink : "black"
-        property color srcPaper: sp ? sp.colours.paper : "white"
-        property vector4d canvas: Qt.vector4d(cw, ch, root.letters ? 2 : root.dots ? 1 : 0, sp ? (sp.motion.seed >>> 0) % 65536 : 0)
+        property vector4d canvas: Qt.vector4d(cw, ch, root.letters ? 2 : 1, sp ? (sp.motion.seed >>> 0) % 65536 : 0)
         property vector4d map: Qt.vector4d(width / k, height / k, cw / 2 - width / k / 2, ch / 2 - height / k / 2)
         property vector4d lattice: sp ? Qt.vector4d(sp.layout.x, sp.layout.y, sp.layout.cellW / 2, sp.layout.cellH / 4) : Qt.vector4d(0, 0, 1, 1)
         property vector4d clipRect: {
@@ -524,7 +469,6 @@ Item {
         property vector4d lvX: lv ? Qt.vector4d(lv.a.tileH, lv.a.perRow, lv.b.tileH, lv.b.perRow) : Qt.vector4d(1, 1, 1, 1)
         property vector4d lvMix: Qt.vector4d(lv ? lv.w : 0, 0, 0, 0)
         property var fieldTex: fieldImg
-        property var artTex: artImg
         property var framesTex: framesImg
         property var glyphTex: glyphsImg
       }
