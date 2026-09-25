@@ -12,20 +12,22 @@
   import Preview from '$lib/components/Preview.svelte';
   import Size from '$lib/components/Size.svelte';
   import Style from '$lib/components/Style.svelte';
+  import Theme from '$lib/components/Theme.svelte';
   import Tone from '$lib/components/Tone.svelte';
   import Wallpaper from '$lib/components/Wallpaper.svelte';
   import { boxPx } from '$lib/layout';
   import { fontsReady, IMAGE_EXTS, openPath, schedule, syncMotion } from '$lib/pipeline';
   import * as session from '$lib/session';
   import { app } from '$lib/state.svelte';
-  import { errorText, inTauri, monitors, themeColors } from '$lib/tauri';
+  import { errorText, inTauri, monitors, sunLocation, themeColors } from '$lib/tauri';
 
-  type Tab = 'look' | 'tone' | 'wall' | 'motion';
+  type Tab = 'look' | 'tone' | 'wall' | 'theme' | 'motion';
   let tab: Tab = $state('look');
-  const TABS: { id: Tab; label: string }[] = [
+  const TABS: { id: Tab; label: string; hint?: string }[] = [
     { id: 'look', label: 'Look' },
     { id: 'tone', label: 'Tone' },
-    { id: 'wall', label: 'Wallpaper' },
+    { id: 'wall', label: 'Wall', hint: 'Wallpaper: art area, colours, screen' },
+    { id: 'theme', label: 'Theme', hint: 'The Stipple theme: desktop colours that follow the sun' },
     { id: 'motion', label: 'Motion' },
   ];
   const dev = import.meta.env.DEV;
@@ -40,6 +42,7 @@
   $effect(() => {
     JSON.stringify(app.doc);
     JSON.stringify(app.wall);
+    JSON.stringify(app.shownColours);
     void app.loaded;
     void app.peeking;
     untrack(schedule);
@@ -50,6 +53,7 @@
     JSON.stringify(app.doc);
     JSON.stringify(app.wall);
     JSON.stringify(app.motion);
+    JSON.stringify(app.themeOpts);
     void app.loaded;
     untrack(session.changed);
   });
@@ -110,7 +114,7 @@
     if (!app.loaded) return;
     if (k === '[') app.stepCols(-1);
     else if (k === ']') app.stepCols(1);
-    else if (k === 'i' || k === 'I') app.setInvert(!app.doc.tone.invert);
+    else if (k === 'i' || k === 'I') app.swapColours();
     else if (k === 'f' || k === 'F') { e.preventDefault(); startCrop(); }
     else if (k === 's' || k === 'S') { e.preventDefault(); void save(); }
     else if (k === '\\') { e.preventDefault(); peek(true); }
@@ -128,7 +132,8 @@
           if (f && !app.loaded) { app.wall.width = f.width; app.wall.height = f.height; }
         })
         .catch(e => app.say('warn', `Could not read the monitors from Hyprland: ${errorText(e)}`));
-      themeColors().then(t => (app.theme = t)).catch(() => {});
+      themeColors().then(t => (app.omarchy = t)).catch(() => {});
+      sunLocation().then(p => (app.sunPlace = p)).catch(() => {});
       void session.start();
       getCurrentWebview()
         .onDragDropEvent(ev => {
@@ -212,7 +217,7 @@
   <aside class="side">
     <div class="tabs" role="tablist" aria-label="Settings">
       {#each TABS as t (t.id)}
-        <button type="button" role="tab" aria-selected={tab === t.id} tabindex={tab === t.id ? 0 : -1} onclick={() => (tab = t.id)}>{t.label}</button>
+        <button type="button" role="tab" aria-selected={tab === t.id} tabindex={tab === t.id ? 0 : -1} title={t.hint ?? ''} onclick={() => (tab = t.id)}>{t.label}</button>
       {/each}
     </div>
     <div class="panel" role="tabpanel">
@@ -223,6 +228,8 @@
         <Tone />
       {:else if tab === 'wall'}
         <Wallpaper />
+      {:else if tab === 'theme'}
+        <Theme />
       {:else}
         <Motion />
       {/if}

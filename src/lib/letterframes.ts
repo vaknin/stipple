@@ -1,7 +1,9 @@
 // Columns motion for Letters: what the shell plugin needs to draw any keyframe itself.
 //
 //   frames.png  every keyframe's cells, one texel per cell, R = 1 + the glyph's index in the
-//               glyph table (0 = blank). Keyframes sit side by side in shelves.
+//               glyph table (0 = blank). Keyframes sit side by side in shelves. G is the same for
+//               the night's keyframes (drawn the other way round, for an hour whose colours have
+//               crossed over; 0 without): the same cells, one glyph table.
 //   glyphs.png  each glyph of the table drawn once per level (a cell height), fitted as the PNG's
 //               letters are (rasterize.ts fitFont) with room around the cell for overhangs. Glyph
 //               g is in channel g % 3 of slot g / 3, so three glyphs share one texel; a level's
@@ -45,8 +47,14 @@ export interface PackedFrames {
 
 const blank = (v: number) => v === 0x20 || v === 0x2800 || v === 0;
 
-/** Pack the keyframes' cells (grids with their layouts) into one texture, shelves at most `maxW` wide. */
-export function packFrames(grids: Grid[], layouts: Layout[], maxW = 4096): PackedFrames {
+/**
+ * Pack the keyframes' cells (grids with their layouts) into one texture, shelves at most `maxW`
+ * wide; `night`, the same keyframes drawn the other way round, into its G channel.
+ */
+export function packFrames(grids: Grid[], layouts: Layout[], maxW = 4096, night?: Grid[] | null): PackedFrames {
+  if (night && (night.length !== grids.length || night.some((g, k) => g.cols !== grids[k]!.cols || g.rows !== grids[k]!.rows))) {
+    throw new Error('the night keyframes are not the day’s');
+  }
   const pos: [number, number][] = [];
   let x = 0, y = 0, shelf = 0, W = 1;
   for (const g of grids) {
@@ -60,7 +68,7 @@ export function packFrames(grids: Grid[], layouts: Layout[], maxW = 4096): Packe
   const rgb = new Uint8Array(W * H * 3);
   const glyphs: number[] = [];
   const index = new Map<number, number>();
-  grids.forEach((g, k) => {
+  const put = (g: Grid, k: number, ch: number) => {
     const [ax, ay] = pos[k]!;
     for (let r = 0; r < g.rows; r++) {
       for (let c = 0; c < g.cols; c++) {
@@ -73,10 +81,12 @@ export function packFrames(grids: Grid[], layouts: Layout[], maxW = 4096): Packe
           glyphs.push(v);
           index.set(v, i);
         }
-        rgb[((ay + r) * W + ax + c) * 3] = i + 1;
+        rgb[((ay + r) * W + ax + c) * 3 + ch] = i + 1;
       }
     }
-  });
+  };
+  grids.forEach((g, k) => put(g, k, 0));
+  night?.forEach((g, k) => put(g, k, 1));
   const frames = grids.map((g, k) => {
     const l = layouts[k]!;
     return { cols: g.cols, rows: g.rows, x: l.x, y: l.y, cellW: l.cellW, cellH: l.cellH, ax: pos[k]![0], ay: pos[k]![1] };

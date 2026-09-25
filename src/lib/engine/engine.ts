@@ -24,11 +24,6 @@ export const rowsFor = (cols: number, mode: Mode, aspect = 1): number =>
 /** Auto columns for the output and crop aspect (see layout.autoColumns). */
 export const autoCols = (mode: Mode, o: LayoutIn, aspect = 1): number => autoColumns(cellAspect(mode), o, aspect);
 
-/** Typist's file colours: dark ink on white, or (invert) light ink on near-black. */
-export function fileColours(invert: boolean): { ink: string; paper: string } {
-  return invert ? { ink: '#f2f2f0', paper: '#111113' } : { ink: '#17171a', paper: '#ffffff' };
-}
-
 export interface ConvertRequest { crop: Crop; opts: ConvertOpts }
 export interface ConvertResult { grid: Grid; ms: number }
 

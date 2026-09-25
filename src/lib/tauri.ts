@@ -28,6 +28,13 @@ export interface ThemeColors {
   accent: string;
 }
 
+/** The weather location (omarchy-weather-location); no coordinates when it was set by name only. */
+export interface SunLocation {
+  name: string;
+  latitude: number | null;
+  longitude: number | null;
+}
+
 /** Tauri rejects with the command's error string; anything else becomes one. */
 export function errorText(e: unknown): string {
   if (typeof e === 'string') return e;
@@ -49,16 +56,19 @@ export const savePng = (png: Uint8Array, stem: string, width: number, height: nu
 export const saveSidecar = (pngPath: string, json: string) =>
   invoke<string>('save_sidecar', { pngPath, json });
 
+/** The textures under `.stipple/<stem>/` (src-tauri files.rs MOTION_FILES). */
+export type MotionFile = 'field' | 'frames' | 'glyphs' | 'night';
+
 /** Writes `<dir>/.stipple/<stem>/field.png` from a packed RGB dot field (motion.packField). */
 /** One motion texture of a saved wallpaper: `.stipple/<stem>/<name>.png`. */
 export const saveField = (pngPath: string, rgb: Uint8Array, width: number, height: number,
-  name: 'field' | 'frames' | 'glyphs' = 'field') =>
+  name: MotionFile = 'field') =>
   invoke<string>('save_field', rgb, {
     headers: { 'x-png-path': encodeURIComponent(pngPath), 'x-size': `${width}x${height}`, 'x-name': name },
   });
 
 /** Remove the motion textures of a saved wallpaper other than `keep`. */
-export const removeMotionFiles = (pngPath: string, keep: ('field' | 'frames' | 'glyphs')[]) =>
+export const removeMotionFiles = (pngPath: string, keep: MotionFile[]) =>
   invoke<void>('remove_motion_files', { path: pngPath, keep });
 
 export interface SidecarFile {
@@ -81,6 +91,12 @@ export const setWallpaper = (path: string) => invoke<SetResult>('set_wallpaper',
 export const addToThemeBackgrounds = (path: string) => invoke<string>('add_to_theme_backgrounds', { path });
 
 export const themeColors = () => invoke<ThemeColors>('theme_colors');
+
+/** The weather location for the Theme tab's sun, or null when none is set. */
+export const sunLocation = () => invoke<SunLocation | null>('sun_location');
+
+/** Switch Omarchy to the Stipple theme (keeping the background); true when it switched. */
+export const useStippleTheme = () => invoke<boolean>('use_stipple_theme');
 
 /** True inside the Tauri webview (false in a plain browser tab of the dev server). */
 export const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;

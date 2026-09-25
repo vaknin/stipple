@@ -1,6 +1,6 @@
 //! Small process and path helpers (std only).
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -36,13 +36,20 @@ pub fn path_with(dir: &Path) -> OsString {
     std::env::join_paths(dirs).unwrap_or_else(|_| dir.as_os_str().to_owned())
 }
 
-/// Run a program, return its stdout. A non-zero exit is an error carrying stderr.
-pub fn run(program: &Path, args: &[&str], path_prefix: Option<&Path>) -> Result<String, String> {
+/// Run a program (with `env` added to its environment), return its stdout. A non-zero exit is an
+/// error carrying stderr.
+pub fn run(
+    program: &Path,
+    args: &[&str],
+    path_prefix: Option<&Path>,
+    env: &[(&str, &OsStr)],
+) -> Result<String, String> {
     let mut cmd = Command::new(program);
     cmd.args(args);
     if let Some(dir) = path_prefix {
         cmd.env("PATH", path_with(dir));
     }
+    cmd.envs(env.iter().copied());
     let out = cmd
         .output()
         .map_err(|e| format!("could not run {}: {e}", program.display()))?;

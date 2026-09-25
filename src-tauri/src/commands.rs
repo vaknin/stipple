@@ -49,8 +49,8 @@ pub async fn save_sidecar(png_path: String, json: String) -> Result<String, Stri
 
 /// A texture of a saved wallpaper for the animated wallpaper (the Dots field, or the Letters
 /// Columns keyframes and glyphs): raw RGB body (3 bytes per texel), headers `x-png-path`
-/// (percent-encoded path of the wallpaper), `x-size` (`<W>x<H>`) and `x-name` (field, frames or
-/// glyphs; field when absent). Written as `<dir>/.stipple/<stem>/<name>.png`.
+/// (percent-encoded path of the wallpaper), `x-size` (`<W>x<H>`) and `x-name` (field, frames,
+/// glyphs or night; field when absent). Written as `<dir>/.stipple/<stem>/<name>.png`.
 #[tauri::command]
 pub async fn save_field(request: Request<'_>) -> Result<String, String> {
     let InvokeBody::Raw(bytes) = request.body() else {
@@ -79,7 +79,7 @@ pub struct Sidecar {
 }
 
 /// Remove the motion textures of a saved wallpaper that it no longer uses (`keep`: the ones it
-/// does, of field, frames and glyphs).
+/// does, of field, frames, glyphs and night).
 #[tauri::command]
 pub async fn remove_motion_files(path: String, keep: Vec<String>) -> Result<(), String> {
     let png = files::wallpaper_png(&files::wallpaper_roots()?, &PathBuf::from(path))?;
@@ -126,4 +126,17 @@ pub async fn add_to_theme_backgrounds(path: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn theme_colors() -> Result<omarchy::ThemeColors, String> {
     omarchy::theme_colors()
+}
+
+/// The weather location (name, and coordinates when it has them) for the Theme tab's sun.
+#[tauri::command]
+pub async fn sun_location() -> Result<Option<omarchy::SunLocation>, String> {
+    omarchy::sun_location()
+}
+
+/// `omarchy theme set stipple`, keeping the background, unless it is the current theme. Returns
+/// whether it switched.
+#[tauri::command]
+pub async fn use_stipple_theme() -> Result<bool, String> {
+    omarchy::use_stipple_theme()
 }

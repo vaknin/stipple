@@ -155,17 +155,28 @@ export function hash(x: number, y: number, z: number): number {
   return (h >>> 8) / 16777216;
 }
 
-/** The field texture the plugin reads (RGB, one texel per dot): R the saved dot, G and B unused. */
-export function packField(f: DotField): Uint8Array {
+/**
+ * The field texture the plugin reads (RGB, one texel per dot): R the saved dot, G the night's (the
+ * dots drawn the other way round, for an hour whose colours have crossed over; 0 without), B unused.
+ */
+export function packField(f: DotField, night?: DotField | null): Uint8Array {
   const { width: W, height: H, dots } = f;
   const out = new Uint8Array(W * H * 3);
   for (let i = 0; i < W * H; i++) out[i * 3] = dots[i] ? 255 : 0;
+  if (night) {
+    if (night.width !== W || night.height !== H) throw new Error('the night dot field is not the day’s size');
+    for (let i = 0; i < W * H; i++) out[i * 3 + 1] = night.dots[i] ? 255 : 0;
+  }
   return out;
 }
 
-/** The dots of one frame at time t (seconds since the wallpaper appeared), as wall.frag dotOn. */
-export function frameDots(packed: Uint8Array, W: number, H: number, m: Motion, t: number, out: Uint8Array = new Uint8Array(W * H)): Uint8Array {
-  for (let i = 0; i < W * H; i++) out[i] = packed[i * 3]! > 127 ? 1 : 0;
+/**
+ * The dots of one frame at time t (seconds since the wallpaper appeared), as wall.frag dotOn:
+ * `channel` 0 the day's, 1 the night's (packField).
+ */
+export function frameDots(packed: Uint8Array, W: number, H: number, m: Motion, t: number, out: Uint8Array = new Uint8Array(W * H),
+  channel: 0 | 1 = 0): Uint8Array {
+  for (let i = 0; i < W * H; i++) out[i] = packed[i * 3 + channel]! > 127 ? 1 : 0;
   if (m.twinkle.on && m.twinkle.amount > 0) {
     const seed = (m.seed >>> 0) % 65536;
     const tk = (Math.floor(t * m.twinkle.rate) * 4 + seed) >>> 0;

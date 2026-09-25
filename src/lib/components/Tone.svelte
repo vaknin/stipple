@@ -15,12 +15,6 @@
 </script>
 
 <Switch
-  label="Invert (light art on dark)"
-  hint="Dots stand for the light parts: light art on a dark wallpaper (I)"
-  checked={app.doc.tone.invert}
-  onchange={on => app.setInvert(on)}
-/>
-<Switch
   label="Auto levels"
   hint="Stretch the photo's levels and aim for a steady amount of ink"
   checked={app.doc.tone.auto}

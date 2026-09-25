@@ -190,9 +190,10 @@ pub fn sidecar_path(png: &Path) -> Result<PathBuf, String> {
     Ok(png.with_file_name(format!("{}.stipple.json", png_stem(png)?)))
 }
 
-/// The textures the animated wallpaper reads: the Dots field, and the Letters Columns keyframes
-/// and their glyph atlas.
-pub const MOTION_FILES: &[&str] = &["field", "frames", "glyphs"];
+/// The textures the animated wallpaper reads: the Dots field, the Letters Columns keyframes and
+/// their glyph atlas, and the night's coverage (the art drawn the other way round, for an hour
+/// whose colours have crossed over).
+pub const MOTION_FILES: &[&str] = &["field", "frames", "glyphs", "night"];
 
 /// `<dir>/.stipple/<stem>/<name>.png` for `<dir>/<stem>.png`, `name` one of MOTION_FILES.
 pub fn motion_path(png: &Path, name: &str) -> Result<PathBuf, String> {
@@ -506,8 +507,10 @@ mod tests {
         let fr = save_field(&a, "frames", (6, 8), &rgb).unwrap();
         assert_eq!(fr, d.join(".stipple/cat-stipple-4x4/frames.png"));
         let gl = save_field(&a, "glyphs", (6, 8), &rgb).unwrap();
+        let ni = save_field(&a, "night", (6, 8), &rgb).unwrap();
+        assert_eq!(ni, d.join(".stipple/cat-stipple-4x4/night.png"));
         remove_motion_files(&a, &["field".into(), "frames".into()]).unwrap();
-        assert!(f.exists() && fr.exists() && !gl.exists());
+        assert!(f.exists() && fr.exists() && !gl.exists() && !ni.exists());
         remove_motion_files(&a, &["field".into(), "frames".into()]).unwrap();
 
         // a copy takes its sidecar and field along under the new name

@@ -1,7 +1,5 @@
 <script lang="ts">
-  import { fileColours } from '../engine/engine';
-  import { luminance } from '../render';
-  import { app } from '../state.svelte';
+  import { app, DEFAULT_COLOURS } from '../state.svelte';
   import type { Monitor } from '../tauri';
   import Icon from './Icon.svelte';
   import RisoInks, { type InkPair } from './RisoInks.svelte';
@@ -23,28 +21,21 @@
     app.setBox(on ? { x: 0.25, y: 0.25, w: 0.5, h: 0.5 } : null, on ? 'Custom art area' : 'Fill the screen');
   }
 
-  const rule = $derived(fileColours(app.doc.tone.invert));
   const custom = $derived(w.ink != null || w.paper != null);
   const customSurround = $derived(w.surround != null && w.surround !== app.colours.paper);
-  // ink lighter than paper without invert (or darker with it) draws a negative of the photo
-  const negative = $derived.by(() => {
-    const li = luminance(app.colours.ink), lp = luminance(app.colours.paper);
-    return app.doc.tone.invert ? li < lp : li > lp;
-  });
-  const isTheme = $derived(!!app.theme && w.ink === app.theme.foreground && w.paper === app.theme.background);
+  const isTheme = $derived(!!app.omarchy && w.ink === app.omarchy.foreground && w.paper === app.omarchy.background);
 
   function useTheme() {
-    if (!app.theme) return;
-    app.wall.ink = app.theme.foreground;
-    app.wall.paper = app.theme.background;
+    if (!app.omarchy) return;
+    app.wall.ink = app.omarchy.foreground;
+    app.wall.paper = app.omarchy.background;
     app.commit('Theme colours');
   }
 
-  /** A riso pair; Invert follows it, so light ink on dark paper stays a positive picture. */
+  /** A riso pair (light ink on dark paper draws the art the other way round: still a positive). */
   function useInks(p: InkPair) {
     app.wall.ink = p.ink;
     app.wall.paper = p.paper;
-    app.doc.tone.invert = luminance(p.ink) > luminance(p.paper);
     app.commit('Riso inks');
   }
 
@@ -133,11 +124,15 @@
     {/if}
   </div>
   <div class="row">
-    <button type="button" disabled={!custom} onclick={resetColours} title={`Invert ${app.doc.tone.invert ? 'on' : 'off'}: ${rule.ink} on ${rule.paper}`}>
-      <Icon name="reset" size={14} /> Invert rule
+    <button type="button" disabled={!custom} onclick={resetColours} title={`${DEFAULT_COLOURS.ink} on ${DEFAULT_COLOURS.paper}`}>
+      <Icon name="reset" size={14} /> Default colours
     </button>
-    <button type="button" disabled={!app.theme} aria-pressed={isTheme} onclick={useTheme}
-      title={app.theme ? `Omarchy theme: ${app.theme.foreground} on ${app.theme.background}` : 'No Omarchy theme colours found'}>
+    <button type="button" onclick={() => app.swapColours()}
+      title="Swap ink and paper: the art is drawn the other way round, so it stays a positive picture (I)">
+      <Icon name="swap" size={14} /> Swap
+    </button>
+    <button type="button" disabled={!app.omarchy} aria-pressed={isTheme} onclick={useTheme}
+      title={app.omarchy ? `Omarchy theme: ${app.omarchy.foreground} on ${app.omarchy.background}` : 'No Omarchy theme colours found'}>
       <Icon name="palette" size={14} /> Theme colours
     </button>
   </div>
@@ -145,18 +140,6 @@
     <span class="dim">Riso inks</span>
     <RisoInks ink={app.colours.ink} paper={app.colours.paper} onpick={useInks} />
   </div>
-  {#if negative}
-    <p class="warn" role="status">
-      <Icon name="alert" size={14} />
-      <span>
-        The ink is {app.doc.tone.invert ? 'darker' : 'lighter'} than the paper with Invert {app.doc.tone.invert ? 'on' : 'off'},
-        so the art comes out as a negative.
-        <button type="button" class="link" onclick={() => app.setInvert(!app.doc.tone.invert)}>
-          Turn Invert {app.doc.tone.invert ? 'off' : 'on'}
-        </button>
-      </span>
-    </p>
-  {/if}
 </div>
 
 <style>
@@ -195,26 +178,4 @@
   .swatch .num { font-size: 11px; }
   .row { display: flex; gap: 6px; }
   .row button { flex: 1; font-size: 12px; }
-  .warn {
-    display: flex;
-    gap: 6px;
-    margin: 0;
-    padding: 6px 8px;
-    border-radius: var(--radius-ctl);
-    background: color-mix(in srgb, var(--warn) 12%, transparent);
-    color: var(--warn);
-    font-size: 12px;
-  }
-  .warn :global(.ic) { margin-top: 2px; }
-  .link {
-    display: inline;
-    height: auto;
-    padding: 0;
-    border: 0;
-    background: none;
-    color: var(--text);
-    text-decoration: underline;
-    font-size: inherit;
-  }
-  .link:hover:not(:disabled) { background: none; }
 </style>

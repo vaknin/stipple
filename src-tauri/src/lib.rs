@@ -26,6 +26,8 @@ pub fn run() {
             commands::set_wallpaper,
             commands::add_to_theme_backgrounds,
             commands::theme_colors,
+            commands::sun_location,
+            commands::use_stipple_theme,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Stipple");

@@ -13,11 +13,27 @@
 // screen), drawn only when the picture changes, and none while nothing can see them: a
 // fullscreen window, windows covering 90% of the screen,
 // 60 s idle (screensaver, lock, screen off), or `stipple pause`.
+//
+// The Stipple theme: while Omarchy's theme is `stipple`, the whole desktop takes its colours from
+// the current Stipple wallpaper and the sun (palette.mjs; the wallpaper's Theme settings are the
+// sidecar's `theme` block). Every minute the plugin works out the sun's elevation (from the weather
+// location), shifts the wallpaper's ink and paper for it, and derives the palette:
+//   - the shell (bar, menus, popups, notifications, lock) gets it in place, as `omarchy-shell shell
+//     applyTheme` would, whenever it has visibly moved;
+//   - the wallpaper surface redraws with the shifted ink and paper, a still wallpaper included
+//     (shader mode 0 re-inks the PNG). When the hour takes ink and paper across each other (Custom's
+//     night), it switches to the art drawn the other way round, which the sidecar's `night` block
+//     brings (night.png, and the G of field.png and frames.png), so the night is a positive too;
+//   - ~/.config/omarchy/themes/stipple/colors.toml is rewritten on a new wallpaper or settings, and
+//     when the palette has drifted far enough (at most every 30 min), and `apply-theme.sh apply`
+//     re-applies the theme so terminals, borders and apps follow. Each of those reloads in place.
 import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import Quickshell.Hyprland
+import qs.Commons
+import "palette.mjs" as Palette
 
 Item {
   id: root
@@ -26,15 +42,26 @@ Item {
   property var shell: null
   property var manifest: null
 
-  readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy/current"
+  readonly property string home: Quickshell.env("HOME")
+  readonly property string stateDir: root.home + "/.local/state/omarchy/current"
+  /** Injected by omarchy-shell's plugin loader (it must stay writable). */
+  property string omarchyPath: Quickshell.env("OMARCHY_PATH") || "/usr/share/omarchy"
+  readonly property string themeDir: root.home + "/.config/omarchy/themes/stipple"
+  readonly property string glue: decodeURIComponent(String(Qt.resolvedUrl("apply-theme.sh")).replace(/^file:\/\//, ""))
   /** Dev only (shell-plugin/dev): show this PNG instead of following the background symlink. */
   property string override: ""
   /** Dev only: keep the session from idling while the surface is shown (power measurements). */
   property bool inhibitIdle: false
+  /** False in the dev harness: it never writes the theme or re-applies it. */
+  property bool writes: true
+  /** Dev only: act as if Omarchy's theme were Stipple. */
+  property bool forceTheme: false
 
   /** Resolved path of the current background. */
   property string current: ""
-  /** The parsed sidecar when it belongs to `current` and has motion on, else null. */
+  /** The parsed sidecar when it belongs to `current`, else null. */
+  property var doc: null
+  /** `doc` when it has motion on, else null. */
   property var spec: null
   /** Bumped on every sidecar load, so the images reload with it. */
   property int version: 0
@@ -51,6 +78,7 @@ Item {
   readonly property string fieldPath: root.isPng ? root.dir + "/.stipple/" + root.stem + "/field.png" : ""
   readonly property string framesPath: root.isPng ? root.dir + "/.stipple/" + root.stem + "/frames.png" : ""
   readonly property string glyphsPath: root.isPng ? root.dir + "/.stipple/" + root.stem + "/glyphs.png" : ""
+  readonly property string nightPath: root.isPng ? root.dir + "/.stipple/" + root.stem + "/night.png" : ""
 
   readonly property var motion: root.spec ? root.spec.motion : null
   readonly property bool dots: !!root.spec && !!root.motion && root.spec.grid.mode === "braille"
@@ -58,6 +86,18 @@ Item {
   /** Columns (Letters): keyframes at other column counts, drawn from frames.png and glyphs.png. */
   readonly property bool letters: !!root.spec && !!root.motion && !!root.motion.columns && root.motion.columns.on
     && !!root.spec.columns && root.spec.columns.frames.length > 0
+  /** Neither effect plays but the colours follow the sun: the PNG re-inked (shader mode 0). */
+  readonly property bool still: root.recolour && !root.dots && !root.letters
+  /**
+   * How far the hour's colours have turned the art over (palette.mjs flipAt): 0 draws the saved
+   * art, 1 the art drawn the other way round, from the night textures the way it is drawn now has.
+   */
+  readonly property real flip: {
+    const n = root.doc ? root.doc.night : null
+    if (!root.recolour || !n) return 0
+    const has = root.letters ? !!root.spec.columns.night : root.dots ? !!n.field : true
+    return has ? root.themed.wall.flip : 0
+  }
   readonly property bool idle: idleMonitor.isIdle
 
   /** The keyframe shown at time t: there and back once per period at an even pace, from `start` (motion.ts columnFrameAt). */
@@ -82,13 +122,207 @@ Item {
 
   // -------------------------------------------------------------------- colours
 
-  readonly property color ink: root.spec ? root.spec.colours.ink : "black"
-  readonly property color paper: root.spec ? root.spec.colours.paper : "white"
+  /** The wallpaper's Theme settings (defaults for a sidecar without them). */
+  readonly property var themeOpts: Palette.cleanTheme(root.doc ? root.doc.theme : null)
+  /** The wallpaper's colours and the palette for the sun now. */
+  readonly property var themed: root.doc && root.doc.colours ? Palette.themeAt(root.doc.colours, root.themeOpts, root.sunNow) : null
+  /** The surface draws the wallpaper in the colours of the hour. */
+  readonly property bool recolour: !!root.themed && root.themeActive && root.themeOpts.wallpaper && root.themeOpts.day !== "off"
+
+  readonly property color ink: root.recolour ? root.themed.wall.ink : root.doc ? root.doc.colours.ink : "black"
+  readonly property color paper: root.recolour ? root.themed.wall.paper : root.doc ? root.doc.colours.paper : "white"
   // the surround: its own colour, or the paper's
   readonly property color surround: {
-    const c = root.spec ? root.spec.colours : null
+    if (root.recolour) return root.themed.wall.surround
+    const c = root.doc ? root.doc.colours : null
     const own = !!c && !!c.surround && String(c.surround).toLowerCase() !== String(c.paper).toLowerCase()
     return own ? c.surround : root.paper
+  }
+
+  // ------------------------------------------------------------------ the sun
+
+  /** { name, latitude, longitude } of the weather location, or null (a 06:00-18:00 sun then). */
+  property var location: null
+  property var sunNow: Palette.clockSun(new Date())
+  /** Dev (`stipple dayAt`): the minute of today to show instead of now, when >= 0. Never written. */
+  property int dayMinute: -1
+
+  function updateSun() {
+    const now = new Date()
+    const d = root.dayMinute >= 0 ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, root.dayMinute) : now
+    const l = root.location
+    root.sunNow = l ? Palette.sun(d, l.latitude, l.longitude) : Palette.clockSun(d)
+  }
+
+  FileView {
+    path: root.home + "/.local/state/omarchy/settings/weather.json"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      let w = null
+      try { w = JSON.parse(text()) } catch (e) { w = null }
+      const lat = w ? Number(w.latitude) : NaN, lon = w ? Number(w.longitude) : NaN
+      root.location = w && w.latitude !== undefined && Number.isFinite(lat) && Number.isFinite(lon)
+        ? { name: String(w.name || ""), latitude: lat, longitude: lon } : null
+      root.updateSun()
+      Qt.callLater(root.themeTick)
+    }
+    onLoadFailed: { root.location = null; root.updateSun() }
+  }
+
+  Timer {
+    interval: 60000
+    repeat: true
+    running: true
+    triggeredOnStart: true
+    onTriggered: { root.updateSun(); root.themeTick() }
+  }
+
+  // ---------------------------------------------------------------- the theme
+
+  property string themeName: ""
+  readonly property bool themeActive: root.themeName === "stipple" || root.forceTheme
+
+  FileView {
+    path: root.stateDir + "/theme.name"
+    watchChanges: true
+    blockLoading: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.themeName = text().trim()
+    onLoadFailed: root.themeName = ""
+  }
+
+  // shell.toml is rendered from Omarchy's own template (a user override first), as theme set does
+  property string userTpl: ""
+  property string stockTpl: ""
+  readonly property string shellTpl: root.userTpl || root.stockTpl
+  FileView {
+    path: root.home + "/.config/omarchy/themed/shell.toml.tpl"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.userTpl = text()
+    onLoadFailed: root.userTpl = ""
+  }
+  FileView {
+    path: root.omarchyPath + "/default/themed/shell.toml.tpl"
+    printErrors: false
+    onLoaded: { root.stockTpl = text(); root.livePalette = null; Qt.callLater(root.themeTick) }
+  }
+
+  /** The last Stipple wallpaper's colours and settings: the palette keeps following the sun under a plain picture. */
+  property var source: null
+  /** The palette for now. */
+  property var palette: null
+  /** What the shell was last given, and when. */
+  property var livePalette: null
+  property real liveAt: 0
+  /** What colors.toml was last written for (wallpaper, colours, settings), its palette, and when. */
+  property string committedKey: ""
+  property var committed: null
+  property real committedAt: 0
+  /** colors.toml as on disk, and as Omarchy last applied it. */
+  property string onDisk: ""
+  property string appliedText: ""
+  property real lastAttempt: 0
+  property string previewPng: ""
+
+  /** Colours in the shell move when the palette has moved this far (OKLab; ~0.02 is just visible). */
+  readonly property real liveStep: 0.004
+  /** A drift this far rewrites colors.toml and re-applies the theme, */
+  readonly property real commitStep: 0.04
+  /** at most this often. */
+  readonly property int commitEvery: 30 * 60000
+
+  FileView {
+    id: colorsOut
+    path: root.themeDir + "/colors.toml"
+    blockLoading: true
+    atomicWrites: true
+    printErrors: false
+    // what is on disk at start is what the theme was last applied with
+    onLoaded: if (!root.onDisk) { root.onDisk = text(); root.appliedText = root.onDisk }
+  }
+
+  onThemeActiveChanged: {
+    root.livePalette = null
+    // `omarchy theme set stipple` has just applied colors.toml and pushes it to the shell right
+    // after writing theme.name: let that land before the live palette goes over it
+    if (root.themeActive) { root.appliedText = root.onDisk; activated.restart() }
+  }
+  Timer { id: activated; interval: 2000; onTriggered: root.themeTick() }
+
+  onDocChanged: Qt.callLater(root.themeTick)
+
+  function applyLive(p) {
+    if (!root.shellTpl) return
+    Color.loadColors(Palette.colorsToml(p))
+    Color.loadShell(Palette.renderTemplate(root.shellTpl, p))
+    Style.scheduleRefresh()
+    root.livePalette = p
+    root.liveAt = Date.now()
+  }
+
+  function themeTick() {
+    if (root.doc && root.doc.colours) {
+      root.source = { colours: root.doc.colours, opts: root.themeOpts, png: root.current,
+                      key: JSON.stringify([root.current, root.doc.colours, root.themeOpts]) }
+    }
+    const src = root.source
+    if (!src) return
+    const p = Palette.themeAt(src.colours, src.opts, root.sunNow).palette
+    root.palette = p
+    if (root.themeActive && !activated.running && Palette.paletteDistance(p, root.livePalette) > root.liveStep) root.applyLive(p)
+    if (!root.writes || root.dayMinute >= 0) return
+
+    const fresh = src.key !== root.committedKey
+    const drift = Palette.paletteDistance(p, root.committed) > root.commitStep
+    if (fresh || (drift && Date.now() - root.committedAt >= root.commitEvery)) {
+      root.committedKey = src.key
+      root.committed = p
+      root.committedAt = Date.now()
+      const text = Palette.colorsToml(p)
+      if (text !== root.onDisk) { colorsOut.setText(text); root.onDisk = text }
+      if (src.png !== root.previewPng) {
+        root.previewPng = src.png
+        preview.command = [root.glue, "preview", src.png]
+        preview.running = true
+      }
+      if (fresh) root.lastAttempt = 0
+    }
+    root.maybeApply()
+  }
+
+  /** Re-apply the theme when colors.toml is newer than what Omarchy applied (retrying a deferral each minute). */
+  function maybeApply() {
+    if (!root.writes || !root.themeActive || apply.running || !root.onDisk || root.onDisk === root.appliedText) return
+    if (Date.now() - root.lastAttempt < 55000) return
+    root.lastAttempt = Date.now()
+    apply.pending = root.onDisk
+    apply.running = true
+  }
+
+  Process {
+    id: preview
+    stderr: StdioCollector { onStreamFinished: if (text.trim()) console.warn("stipple: preview:", text.trim()) }
+  }
+
+  Process {
+    id: apply
+    property string pending: ""
+    command: [root.glue, "apply"]
+    stderr: StdioCollector { onStreamFinished: if (text.trim()) console.warn("stipple: apply-theme:", text.trim()) }
+    onExited: (code, status) => {
+      // 75: the screensaver or another theme change was in the way; the next minute retries
+      if (code === 75) return
+      if (code !== 0) console.warn("stipple: apply-theme.sh apply exited", code)
+      root.appliedText = apply.pending
+      // theme set pushed colors.toml to the shell: put the palette of this minute back
+      root.livePalette = null
+      root.themeTick()
+    }
   }
 
   // ------------------------------------------------------------------ frame rate
@@ -208,6 +442,7 @@ Item {
       onStreamFinished: {
         const p = String(text || "").trim()
         if (p !== root.current) {
+          root.doc = null
           root.spec = null
           root.current = p
         }
@@ -217,7 +452,7 @@ Item {
 
   function refresh() {
     if (root.override) {
-      if (root.current !== root.override) { root.spec = null; root.current = root.override }
+      if (root.current !== root.override) { root.doc = null; root.spec = null; root.current = root.override }
       return
     }
     if (!resolve.running) resolve.running = true
@@ -252,22 +487,24 @@ Item {
     watchChanges: true
     printErrors: false
     onLoaded: root.load(text())
-    onLoadFailed: root.spec = null
+    onLoadFailed: { root.doc = null; root.spec = null }
     onFileChanged: reload()
   }
 
   function load(raw) {
     let s = null
     try { s = JSON.parse(raw) } catch (e) { s = null }
-    const m = s && s.motion
-    const on = !!m && (m.twinkle.on || (!!m.columns && m.columns.on))
-    if (!s || !/^stipple\//.test(String(s.format)) || !on) {
+    if (!s || !/^stipple\//.test(String(s.format)) || !s.colours || !s.image || !s.layout) {
+      root.doc = null
       root.spec = null
       return
     }
+    const m = s.motion
+    const on = !!m && (m.twinkle.on || (!!m.columns && m.columns.on))
     root.version++
     root.epoch = Date.now()
-    root.spec = s
+    root.doc = s
+    root.spec = on ? s : null
   }
 
   // ------------------------------------------------------------------------ IPC
@@ -286,14 +523,46 @@ Item {
       return "at " + seconds
     }
 
+    /** Show the colours of `minute` (0-1439) today instead of now; -1 goes back to the clock. Writes nothing. */
+    function dayAt(minute: int): string {
+      root.dayMinute = minute >= 0 ? Math.min(1439, minute) : -1
+      root.updateSun()
+      root.themeTick()
+      return JSON.stringify({ at: root.dayMinute, sun: root.sunNow, wall: root.themed ? root.themed.wall : null, background: root.palette ? root.palette.background : null })
+    }
+
+    /** Rewrite colors.toml now and re-apply the theme (checks). */
+    function retheme(): string {
+      root.committedKey = ""
+      root.appliedText = ""
+      root.lastAttempt = 0
+      root.themeTick()
+      return root.themeActive ? "applying" : "written (the theme is not active)"
+    }
+
     function status(): string {
       return JSON.stringify({
         current: root.current,
         animated: !!root.spec,
+        theme: {
+          name: root.themeName,
+          active: root.themeActive,
+          day: root.themeOpts.day,
+          strength: root.themeOpts.strength,
+          recolour: root.recolour,
+          flip: Math.round(root.flip * 1000) / 1000,
+          location: root.location,
+          sun: { elevation: Math.round(root.sunNow.elevation * 10) / 10, rising: root.sunNow.rising, at: root.dayMinute },
+          palette: root.palette ? { background: root.palette.background, foreground: root.palette.foreground, accent: root.palette.accent } : null,
+          wall: root.recolour ? root.themed.wall : null,
+          live: root.liveAt ? new Date(root.liveAt).toISOString() : null,
+          committed: root.committedAt ? new Date(root.committedAt).toISOString() : null,
+          applied: !!root.onDisk && root.onDisk === root.appliedText,
+        },
         version: root.version,
         paused: root.paused,
         idle: root.idle,
-        screens: surfaces.instances.map(w => ({ name: w.screen ? w.screen.name : "", shown: w.visible, field: w.fieldStatus, fps: w.fps, keyframe: w.keyframe, fullscreen: w.fullscreen, windows: w.hasWindows, covered: Math.round(w.covered * 1000) / 1000, frames: w.frameCount })),
+        screens: surfaces.instances.map(w => ({ name: w.screen ? w.screen.name : "", shown: w.visible, art: w.artStatus, field: w.fieldStatus, fps: w.fps, keyframe: w.keyframe, fullscreen: w.fullscreen, windows: w.hasWindows, covered: Math.round(w.covered * 1000) / 1000, frames: w.frameCount })),
       })
     }
 
@@ -317,10 +586,13 @@ Item {
       required property var modelData
 
       screen: modelData
+      readonly property int artStatus: artImg.status
       readonly property int fieldStatus: fieldImg.status
-      readonly property bool ready: (!root.dots || fieldImg.status === Image.Ready)
+      readonly property bool ready: (!root.still || artImg.status === Image.Ready)
+        && (!root.dots || fieldImg.status === Image.Ready)
         && (!root.letters || (framesImg.status === Image.Ready && glyphsImg.status === Image.Ready))
-      visible: !!root.spec && ready
+        && (!root.still || root.flip <= 0 || nightImg.status === Image.Ready)
+      visible: (!!root.spec || root.recolour) && ready
       color: root.paper
       anchors { top: true; bottom: true; left: true; right: true }
       exclusionMode: ExclusionMode.Ignore
@@ -389,6 +661,15 @@ Item {
       }
 
       Image {
+        id: artImg
+        visible: false
+        asynchronous: false
+        cache: false
+        smooth: true
+        source: root.still ? "file://" + encodeURI(root.current) + "?v=" + root.version : ""
+      }
+
+      Image {
         id: fieldImg
         visible: false
         asynchronous: false
@@ -415,12 +696,30 @@ Item {
         source: root.letters ? "file://" + encodeURI(root.glyphsPath) + "?v=" + root.version : ""
       }
 
+      Image {
+        id: nightImg
+        visible: false
+        asynchronous: false
+        cache: false
+        smooth: true
+        // loaded from the first hour it is needed on, and kept for the rest of this wallpaper
+        property bool wanted: false
+        source: wanted ? "file://" + encodeURI(root.nightPath) + "?v=" + root.version : ""
+        Connections {
+          target: root
+          function onFlipChanged() { if (root.still && root.flip > 0) nightImg.wanted = true }
+          function onVersionChanged() { nightImg.wanted = root.still && root.flip > 0 }
+          function onStillChanged() { if (root.still && root.flip > 0) nightImg.wanted = true }
+        }
+        Component.onCompleted: wanted = root.still && root.flip > 0
+      }
+
       ShaderEffect {
         id: shader
         anchors.fill: parent
         fragmentShader: Qt.resolvedUrl("shaders/wall.frag.qsb")
 
-        readonly property var sp: root.spec
+        readonly property var sp: root.doc
         readonly property real cw: sp ? sp.image.width : 1
         readonly property real ch: sp ? sp.image.height : 1
         // PreserveAspectCrop, as Omarchy draws the PNG: wallpaper px = uv * map.xy + map.zw
@@ -428,7 +727,9 @@ Item {
 
         property color ink: root.ink
         property color paper: root.paper
-        property vector4d canvas: Qt.vector4d(cw, ch, root.letters ? 2 : 1, sp ? (sp.motion.seed >>> 0) % 65536 : 0)
+        property color srcInk: sp ? sp.colours.ink : "black"
+        property color srcPaper: sp ? sp.colours.paper : "white"
+        property vector4d canvas: Qt.vector4d(cw, ch, root.letters ? 2 : root.dots ? 1 : 0, sp && sp.motion ? (sp.motion.seed >>> 0) % 65536 : 0)
         property vector4d map: Qt.vector4d(width / k, height / k, cw / 2 - width / k / 2, ch / 2 - height / k / 2)
         property vector4d lattice: sp ? Qt.vector4d(sp.layout.x, sp.layout.y, sp.layout.cellW / 2, sp.layout.cellH / 4) : Qt.vector4d(0, 0, 1, 1)
         property vector4d clipRect: {
@@ -437,13 +738,12 @@ Item {
                    : Qt.vector4d(0, 0, cw, ch)
         }
         property vector4d field: {
-          if (!sp) return Qt.vector4d(1, 1, 0, 0)
+          if (!sp || !sp.grid) return Qt.vector4d(1, 1, 0, 0)
           const px = sp.layout.cellW / 2, py = sp.layout.cellH / 4
           return Qt.vector4d(sp.grid.cols * 2, sp.grid.rows * 4, Math.min(sp.layout.dotR * px, 0.46 * py, 0.46 * px), 0)
         }
         property vector4d effects: {
-          const m = sp ? sp.motion : null
-          return Qt.vector4d(m && m.twinkle.on ? m.twinkle.amount : 0, 0, 0, 0)
+          return Qt.vector4d(root.dots ? root.motion.twinkle.amount : 0, root.flip, 0, 0)
         }
         property vector4d inner: {
           const r = sp && sp.layout.inner
@@ -461,8 +761,10 @@ Item {
         property vector4d lvX: lv ? Qt.vector4d(lv.a.tileH, lv.a.perRow, lv.b.tileH, lv.b.perRow) : Qt.vector4d(1, 1, 1, 1)
         property vector4d lvMix: Qt.vector4d(lv ? lv.w : 0, 0, 0, 0)
         property var fieldTex: fieldImg
+        property var artTex: artImg
         property var framesTex: framesImg
         property var glyphTex: glyphsImg
+        property var nightTex: nightImg
       }
     }
   }

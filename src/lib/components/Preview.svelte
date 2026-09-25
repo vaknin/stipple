@@ -6,6 +6,7 @@
   import { drawPreview, schedule, setPreviewCanvas } from '../pipeline';
   import { app } from '../state.svelte';
   import Icon from './Icon.svelte';
+  import ThemeBar from './ThemeBar.svelte';
 
   let { onopen }: { onopen: () => void } = $props();
 
@@ -170,6 +171,10 @@
         onwheel={onWheel}
         ondblclick={onDblClick}
       ></canvas>
+      {#if app.themeShown && app.loaded && !app.cropping && !app.peeking}
+        <!-- about the height of Omarchy's bar on the screen -->
+        <ThemeBar palette={app.themed.palette} date={app.previewDate} height={Math.max(14, Math.round(fitted.cssH * 0.045))} />
+      {/if}
       {#if boxCss && !app.cropping}
         <div class="box-outline" class:active={grip || drag} aria-hidden="true"
           style="left: {boxCss.x}px; top: {boxCss.y}px; width: {boxCss.w}px; height: {boxCss.h}px">

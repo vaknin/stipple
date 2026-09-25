@@ -15,20 +15,26 @@ fills it exactly.
 2. Adjust it. The preview follows every control while you drag.
    - **Style**: Dots (Atkinson dithering) or Letters (Shape-aware or Density).
    - **Columns**: type a number (4–4096), or **Auto**. Rows follow from the crop.
-   - **Tone**: Invert, Auto levels, Brightness, Contrast. Double-click a slider to reset it; click
+   - **Tone**: Auto levels, Brightness, Contrast. Double-click a slider to reset it; click
      its value to type one.
    - **Crop** (`F`): move, zoom (wheel, `+`/`-`), rotate (`R`), Fit; Enter applies, Escape cancels.
    - **Wallpaper**: **Art area**: **Fill** (the whole screen) or **Custom**, a rectangle on the
      preview: drag it to move it, drag its edges or corners to resize it, scroll over it to scale
-     it, double-click it to centre it. Ink, Paper and (Custom) Surround colours ("Invert rule" or
-     the current Omarchy theme's colours), and eight **Riso inks** presets: light risograph inks on
-     dark paper. With several monitors, which one the wallpaper is made for.
+     it, double-click it to centre it. Ink, Paper and (Custom) Surround colours (**Default colours**,
+     **Swap** (`I`), or the current Omarchy theme's colours), and eight **Riso inks** presets: light
+     risograph inks on dark paper. The colours decide which way the art goes: light ink on darker
+     paper stands for the photo's light parts, dark ink for its dark parts, so it is never a
+     negative. With several monitors, which one the wallpaper is made for.
    - **Motion**: Twinkle, Columns (see
      [Animated wallpapers](#animated-wallpapers)). The preview plays it; the pause button shows
      the still.
+   - **Theme**: how the desktop's colours follow this wallpaper and the sun under the Stipple
+     theme (see [The Stipple theme](#the-stipple-theme)). **Preview at** shows any time of day,
+     with a mock bar in the palette's colours over the preview.
 3. **Save** (`S`) writes `~/Pictures/Wallpapers/<photo>-stipple-<W>x<H>.png` (never overwriting:
    `-2`, `-3`… on collision) and a `.stipple.json` next to it.
-   Saving again after changing only the motion updates that file instead of making a new one.
+   Saving again after changing only the motion or the Theme settings updates that file instead
+   of making a new one.
    **Set as wallpaper** saves if needed and runs `omarchy theme bg set`, then checks that
    `omarchy theme bg current` names the new file.
 
@@ -41,7 +47,7 @@ joins that theme's rotation.
 | `O`, `Ctrl+O` | Open a photo |
 | `Z` / `Shift+Z`, `Ctrl+Y` | Undo / redo |
 | `[` `]` | One column fewer / more |
-| `I` | Invert |
+| `I` | Swap ink and paper |
 | `F` | Crop |
 | `\` (hold) | Show the photo instead of the art |
 | `S` | Save |
@@ -64,9 +70,9 @@ make a new version from it (any other change saves a new file).
   the layout (cell size and position), the source path and the engine commit.
   A future animated renderer can re-render, re-characterise or animate from this file alone.
 - **`.stipple/<name>/field.png`** (Dots only) is the dot field the animated wallpaper reads: one
-  pixel per dot, the saved dot in the red channel. It sits in a hidden
-  folder so `omarchy theme bg next` never shows it. The sidecar (format `stipple/2`) also holds the
-  motion.
+  pixel per dot, the saved dot in the red channel (the night's in green, see below). It sits in a hidden
+  folder so `omarchy theme bg next` never shows it. The sidecar (format `stipple/3`) also holds the
+  motion, and the Theme settings (`theme`; a sidecar without them gets the defaults, Sky at 70%).
 - **`.stipple/<name>/frames.png`** and **`glyphs.png`** (Letters with Columns motion) are the
   keyframes: the engine converts the photo at **Smoothness** column counts spaced geometrically
   from From to To (fewer if all the cells would not fit a 4096 × 6000 texture), plus the saved
@@ -167,13 +173,16 @@ render a parked window anyway.
   body, encoded as `field.png`, `frames.png` or `glyphs.png`), `remove_motion_files` (the ones a
   saved wallpaper no longer uses), `read_sidecar` (reopening), `save_session` / `read_session`
   (the last photo and settings, see above), `set_wallpaper` (only files in
-  `~/Pictures/Wallpapers` or the theme backgrounds), `add_to_theme_backgrounds`, `theme_colors`.
+  `~/Pictures/Wallpapers` or the theme backgrounds), `add_to_theme_backgrounds`, `theme_colors`,
+  `sun_location` (the weather location's coordinates), `use_stipple_theme` (`omarchy theme set
+  stipple`, keeping the background).
   The capability grants exactly these plus drag-and-drop events and the open dialog; no fs or
   shell plugin, no `core:default`.
 - `omarchy` is run from `$OMARCHY_PATH/bin` (else `/usr/share/omarchy/bin`, else PATH), with that
   directory first on the child's PATH: an app started from the launcher does not have it.
-- Default colours follow Typist's rule: Invert off gives `#17171a` on `#ffffff`, Invert on gives
-  `#f2f2f0` on `#111113`. The Wallpaper tab warns when custom colours would draw a negative.
+- The default colours are Typist's inverted file colours, `#f2f2f0` on `#111113`. There is no
+  Invert option: the engine's `tone.invert` is set from the colours (ink lighter than the paper in
+  OKLab). An older file without its own colours gets the ones its Invert setting drew.
 - Engine changes are listed in `src/lib/typist/NOTICE`.
 
 ## Animated wallpapers
@@ -209,3 +218,57 @@ omarchy-shell stipple status          # what it shows, fps, pause state
 
 To work on it without touching the running shell:
 `STIPPLE_CURRENT=<png> quickshell -p shell-plugin/dev` (stop with `quickshell kill -p shell-plugin/dev`).
+
+## The Stipple theme
+
+`shell-plugin/install.sh` also creates an Omarchy theme, **Stipple**
+(`~/.config/omarchy/themes/stipple`). While it is the current theme, the whole desktop takes its
+colours from the current Stipple wallpaper, and they follow the sun: the bar, menus, popups,
+notifications and lock screen, the terminals, window borders, btop, Neovim and the browser, and
+the wallpaper itself. Pick it in Omarchy's theme picker, or leave **Use the Stipple theme when set
+as wallpaper** on in the Theme tab and Set a wallpaper.
+
+The palette is `shell-plugin/kivan.stipple/palette.mjs`, shared by the plugin, the app's preview
+and the tests. The ink becomes the accent, the paper the surfaces, text is a quiet colour of the
+ink's hue at 7:1 or more, and the terminal colours are fixed hues re-toned for the paper and turned
+a little toward the ink. What the hour does is the wallpaper's Theme setting:
+
+| Day | What changes |
+| --- | --- |
+| Off | nothing: the wallpaper's own colours all day |
+| Sky | hue and light follow the sky: cool deep night, blue hour, warm golden hour, own colours by day |
+| Light | hue kept; only lightness and contrast follow the sun, dim at night |
+| Warm | a warm evening and a darker night; mornings stay as they are |
+| Custom | your own night ink and paper (default: the day colours swapped), crossfaded through twilight |
+
+When the hour takes ink and paper across each other (Custom's night on the other side of the
+day's colours), the art is also drawn the other way round, so the night is a positive picture too.
+Save then writes the night's art beside the day's: `.stipple/<name>/night.png` (its coverage),
+the green channel of `field.png` (its dots) and of `frames.png` (its keyframes, one glyph table
+for both). The plugin switches over in a narrow band where ink and paper have the same lightness,
+where there is no contrast to see it by. Sky, Light and Warm never cross, so they save no night.
+
+**Strength** scales any of them. **Surface** draws the bar and panels on the paper, a deeper paper,
+or paper tinted with the ink. With **Wallpaper follows the sun** off only the desktop's colours move.
+
+The time of day is the sun's elevation at the weather location
+(`omarchy-weather-location --set <name> <lat>,<lon>`; without coordinates the sun rises at 06:00
+and sets at 18:00), so dusk comes at dusk in every season. Every minute the plugin:
+
+- gives the shell the palette of the minute, in place, when it has visibly moved (as
+  `omarchy-shell shell applyTheme` would, with no process started);
+- redraws the wallpaper surface with the shifted ink and paper, a still wallpaper included (shader
+  mode 0 re-inks the PNG: every mono PNG is paper + ink × coverage);
+- rewrites the theme's `colors.toml` (and its picker tile, `preview.png`) for a new wallpaper or new
+  settings, and when the palette has drifted far enough, at most every 30 minutes: a few times around
+  dawn and dusk, never at noon or midnight. Then `apply-theme.sh apply` runs
+  `omarchy theme set stipple` with the background kept, and every app reloads in place. It waits
+  while the screensaver runs or another theme change is under way, and does nothing once another
+  theme has been picked.
+
+```sh
+omarchy-shell stipple status        # the theme block: sun, palette, when it last moved
+omarchy-shell stipple dayAt 1140    # show 19:00's colours now (writes nothing); dayAt -1 goes back
+omarchy-shell stipple retheme       # rewrite colors.toml and re-apply the theme now
+```
+

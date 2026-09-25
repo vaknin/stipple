@@ -2,6 +2,7 @@
 // (app.js does the same). A change that does not touch the conversion (colours, a box moved with
 // manual columns) only redraws. The full-size render happens on Save / Set only.
 
+import { cleanTheme, lightInk } from '$palette';
 import type { ConvertOpts, Grid } from '$typist/convert.js';
 import { autoCrop, decodeImage, ImageError, imageErrorMessage, type Photo } from '$typist/imageio.js';
 import { TONE_DEFAULTS } from '$typist/tone.js';
@@ -30,8 +31,11 @@ export const fontsReady: Promise<unknown> = document.fonts
 
 let preview: HTMLCanvasElement | null = null;
 let raf = 0;
-let lastKey = '';
 let lastFrame = 0;
+/** The last grid converted for each side, and the request it was converted for. */
+const emptyGrids = (): Record<Side, { key: string; grid: Grid | null }> =>
+  ({ day: { key: '', grid: null }, night: { key: '', grid: null } });
+let grids = emptyGrids();
 
 /** The preview canvas (its backing size is set by Preview.svelte before each draw). */
 export function setPreviewCanvas(c: HTMLCanvasElement | null) {
@@ -50,26 +54,48 @@ function frame(t: number) {
   void render();
 }
 
-/** The converter request for the current document. */
-export function currentRequest(): ConvertRequest {
+/**
+ * Which grid: the day's, drawn for the wallpaper's own colours, or the night's, drawn the other way
+ * round for an hour whose colours have crossed over (palette.mjs flipAt).
+ */
+export type Side = 'day' | 'night';
+
+/**
+ * The converter request for the current document. The colours decide which way the art goes:
+ * light ink on darker paper stands for the photo's light parts (the engine's invert), dark ink for
+ * its dark parts, so the picture is never a negative. The night side is the other way round.
+ */
+export function requestFor(side: Side): ConvertRequest {
   const d = app.doc;
+  const invert = lightInk(app.colours.ink, app.colours.paper) !== (side === 'night');
   const opts: ConvertOpts = {
     mode: d.mode, cols: app.cols, rows: app.rows, dither: 'atkinson', ascii: d.ascii, blocks: 'quad', color: false,
-    tone: { ...TONE_DEFAULTS, ...d.tone },
+    tone: { ...TONE_DEFAULTS, ...d.tone, invert },
     // Dots carry their dot field: the animated preview and the saved field.png come from it
     field: d.mode === 'braille',
   };
   return { crop: { ...app.crop }, opts };
 }
 
+/**
+ * The grid the preview shows: the night's while the Theme tab previews an hour whose colours have
+ * crossed over. The plugin crossfades in a narrow band where ink and paper meet (flipAt); there is
+ * no contrast to see that by at the preview's size, so the preview switches halfway.
+ */
+export function shownSide(): Side {
+  return (app.themeShown || app.previewMinute != null) && app.themed.wall.flip >= 0.5 ? 'night' : 'day';
+}
+
 async function render() {
   if (!app.loaded) return;
-  const req = currentRequest();
+  const side = shownSide();
+  const req = requestFor(side);
   const key = JSON.stringify(req);
-  if (key !== lastKey || !app.grid) {
+  const have = grids[side];
+  if (key !== have.key || !have.grid) {
     const res = await engine.convert(req);
     if (res) {
-      lastKey = key;
+      grids[side] = { key, grid: res.grid };
       app.grid = res.grid;
       app.runMs = res.ms;
       perf.add('run', res.ms);
@@ -77,22 +103,28 @@ async function render() {
       syncFrames();
       // the settings moved on while this converted: go again (a queued newer request is already
       // running in the worker, so this only catches the end of a drag)
-      if (JSON.stringify(currentRequest()) !== key) schedule();
+      if (JSON.stringify(requestFor(shownSide())) !== key) schedule();
     }
   } else {
+    // the other side's grid was already converted (scrubbing the Theme tab's time back and forth)
+    if (app.grid !== have.grid) app.grid = have.grid;
     drawPreview();
     syncFrames();
   }
 }
 
-/** The grid for the current settings (converts when the preview is behind). */
-export async function currentGrid() {
-  const req = currentRequest();
+/** The grid for the current settings, of one side (converts when the preview does not have it). */
+export async function currentGrid(side: Side = 'day') {
+  const req = requestFor(side);
   const key = JSON.stringify(req);
-  if (key === lastKey && app.grid) return app.grid;
+  const have = grids[side];
+  if (key === have.key && have.grid) return have.grid;
   for (;;) {
     const res = await engine.convert(req);
-    if (res) return res.grid;
+    if (res) {
+      grids[side] = { key, grid: res.grid };
+      return res.grid;
+    }
   }
 }
 
@@ -107,7 +139,8 @@ export function drawPreview() {
   const ctx = c.getContext('2d');
   if (!ctx) return;
   const t0 = performance.now();
-  const colours = app.colours;
+  // the Theme tab shows the colours of the hour (display only: Save keeps the day's)
+  const colours = app.shownColours;
   if (app.peeking) {
     const layout = layoutFor(g, c.width, c.height);
     drawPhotoCrop(ctx, loaded.photo.canvas, app.crop, layout, colours.paper, c.width, c.height, colours.surround);
@@ -164,24 +197,29 @@ interface FrameBatch {
 /** The batch for the current settings (maybe building) and the last complete one (playing). */
 let frames: FrameBatch | null = null;
 let shown: FrameBatch | null = null;
-/** Converted keyframes by column count, for `cacheKey`'s photo and options. */
-let cache = { key: '', grids: new Map<number, Grid>() };
+/** Converted keyframes by column count, for `cacheKey`'s photo and options, one set per side. */
+const emptyCaches = (): Record<Side, { key: string; grids: Map<number, Grid> }> =>
+  ({ day: { key: '', grids: new Map() }, night: { key: '', grids: new Map() } });
+let caches = emptyCaches();
+/** The side Save is waiting for (columnFrames): the preview does not switch the build away from it. */
+let held: Side | null = null;
+const buildSide = (): Side => held ?? shownSide();
 
 /** Everything a keyframe depends on but its column count. */
-function cacheKey(): string {
-  const { crop, opts } = currentRequest();
+function cacheKey(side: Side): string {
+  const { crop, opts } = requestFor(side);
   return JSON.stringify([app.loaded?.path, crop, { ...opts, cols: 0, rows: 0, field: false }, app.cropAspect]);
 }
 
 /** Everything the set of keyframes depends on (not the cycle: that is only the pace). */
-function framesKey(): string {
+function framesKey(side: Side): string {
   const m = app.playMotion.columns;
-  return JSON.stringify([cacheKey(), m.from, m.to, m.frames, app.cols]);
+  return JSON.stringify([cacheKey(side), m.from, m.to, m.frames, app.cols]);
 }
 
 /** The complete keyframes to play: the current ones, or the last set of this picture while they build. */
 function playable(): FrameBatch | null {
-  const base = cacheKey();
+  const base = cacheKey(shownSide());
   for (const b of [frames, shown]) if (b?.grids.length && b.base === base) return b;
   return null;
 }
@@ -192,19 +230,20 @@ export const currentPlan = () =>
 
 /** Start building the keyframes for the current settings, if Columns is on and they are not built. */
 function syncFrames() {
-  const base = cacheKey();
-  if (cache.key !== base) cache = { key: base, grids: new Map() };
+  const side = buildSide();
+  const base = cacheKey(side);
+  if (caches[side].key !== base) caches[side] = { key: base, grids: new Map() };
   if (!app.loaded || !app.playMotion.columns.on) {
     if (frames) { frames = null; shown = null; engine.frames.cancel(); app.framesProgress = null; }
     return;
   }
-  const key = framesKey();
+  const key = framesKey(side);
   if (frames?.key === key) return;
   const { cols } = currentPlan();
   const batch: FrameBatch = { base, key, cols, start: columnStart(cols, app.cols), grids: [], done: Promise.resolve(null) };
   if (frames?.grids.length) shown = frames;
   frames = batch;
-  const have = cache.grids;
+  const have = caches[side].grids;
   const finish = () => {
     batch.grids = cols.map(c => have.get(c)!);
     // keep what this set and the one still playing use
@@ -222,12 +261,12 @@ function syncFrames() {
     batch.done = Promise.resolve(batch.grids);
     return;
   }
-  const { crop, opts } = currentRequest();
+  const { crop, opts } = requestFor(side);
   const reqs = missing.map(c => ({ crop, opts: { ...opts, cols: c, rows: rowsFor(c, opts.mode, app.cropAspect), field: false } }));
   let n = cols.length - missing.length;
   app.framesProgress = { done: n, total: cols.length };
   batch.done = engine.frames.run(reqs, (i, grid) => {
-    if (cache.grids !== have) return;
+    if (caches[side].grids !== have) return;
     have.set(missing[i]!, grid);
     if (frames === batch) app.framesProgress = { done: ++n, total: cols.length };
   }).then(grids => (frames !== batch || !grids ? null : finish()), e => {
@@ -237,14 +276,20 @@ function syncFrames() {
   batch.done.catch(e => app.say('error', `Could not build the Columns frames: ${errorText(e)}`));
 }
 
-/** The Columns keyframes for the current settings (built now if they are not). */
-export async function columnFrames(): Promise<{ cols: number[]; start: number; grids: Grid[] }> {
-  for (;;) {
-    syncFrames();
-    const b = frames;
-    if (!b) throw new Error('Columns needs the Letters style');
-    const grids = await b.done;
-    if (grids && frames === b) return { cols: b.cols, start: b.start, grids };
+/** The Columns keyframes of one side for the current settings (built now if they are not). */
+export async function columnFrames(side: Side = 'day'): Promise<{ cols: number[]; start: number; grids: Grid[] }> {
+  held = side;
+  try {
+    for (;;) {
+      syncFrames();
+      const b = frames;
+      if (!b) throw new Error('Columns needs the Letters style');
+      const grids = await b.done;
+      if (grids && frames === b) return { cols: b.cols, start: b.start, grids };
+    }
+  } finally {
+    held = null;
+    schedule();
   }
 }
 
@@ -293,7 +338,7 @@ async function decodePath(path: string) {
 async function adopt(photo: Photo, path: string, name: string) {
   if (app.cropping) app.cropping = false;
   await engine.setSource(photo.canvas);
-  lastKey = '';
+  grids = emptyGrids();
   app.grid = null;
   app.loaded = { photo, path, name };
 }
@@ -341,6 +386,8 @@ interface SidecarSpec {
   doc: unknown;
   wallpaper: unknown;
   motion: unknown;
+  /** The Theme settings (none in older files: the defaults). */
+  theme: unknown;
 }
 
 /** A sidecar (`stipple/…`) or a session (`stipple-session/…`) file, parsed. */
@@ -354,6 +401,7 @@ function parseSidecar(json: string, format = /^stipple\//): SidecarSpec | null {
       doc: s.doc,
       wallpaper: s.wallpaper,
       motion: s.motionSettings ?? s.motion,
+      theme: s.theme,
     };
   } catch {
     return null;
@@ -376,9 +424,9 @@ async function reopen(pngPath: string, spec: SidecarSpec, editable: boolean, seq
   if (seq !== loadSeq) return;
   await adopt(photo, spec.source.path, spec.source.name);
   applySpec(spec);
-  app.saved = editable ? { path: pngPath, key: app.imageKey(), motion: JSON.stringify(app.playMotion) } : null;
+  app.saved = editable ? { path: pngPath, key: app.imageKey(), motion: JSON.stringify(app.playMotion), theme: JSON.stringify(app.themeOpts) } : null;
   app.say('info', editable
-    ? `Reopened ${file}. A motion change updates it when you save; other changes save a new file.`
+    ? `Reopened ${file}. A motion or theme change updates it when you save; other changes save a new file.`
     : `Reopened ${file}. Saving makes a new file in ~/Pictures/Wallpapers.`);
   schedule();
 }
@@ -386,8 +434,9 @@ async function reopen(pngPath: string, spec: SidecarSpec, editable: boolean, seq
 /** A spec's settings over the adopted photo, as the start of its history. */
 function applySpec(spec: SidecarSpec) {
   app.doc = docFrom(spec.doc);
-  app.wall = wallFrom(spec.wallpaper);
+  app.wall = wallFrom(spec.wallpaper, spec.doc);
   app.motion = cleanMotion(spec.motion);
+  app.themeOpts = cleanTheme(spec.theme);
   // an older file's crop may have been square: the art's shape can move it off the photo
   app.keepCropOnPhoto();
   app.resetHistory();

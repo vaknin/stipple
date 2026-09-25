@@ -77,6 +77,19 @@ describe('shader mirror', () => {
     expect(Array.from(frameDots(p, W, H, m, 1.3 + 1 / m.twinkle.rate))).not.toEqual(Array.from(a));
   });
 
+  test('the night dots ride in G and twinkle as the day’s do', () => {
+    const W = 200, H = 120, day = field(W, H, 4), night = field(W, H, 9);
+    const p = packField(day, night);
+    expect(Array.from(frameDots(p, W, H, defaultMotion(), 3))).toEqual(Array.from(day.dots));
+    expect(Array.from(frameDots(p, W, H, defaultMotion(), 3, undefined, 1))).toEqual(Array.from(night.dots));
+    expect(Array.from(packField(day)).filter((_, i) => i % 3 === 1).every(v => v === 0)).toBe(true);
+    // the same cells flip on both sides
+    const m = with_(m => { m.twinkle.on = true; m.twinkle.amount = 0.05; });
+    const a = frameDots(p, W, H, m, 1.3), n = frameDots(p, W, H, m, 1.3, undefined, 1);
+    for (let i = 0; i < W * H; i++) expect(a[i] !== day.dots[i]).toBe(n[i] !== night.dots[i]);
+    expect(() => packField(day, field(W, H + 4, 1))).toThrow();
+  });
+
   test('frameGrid encodes the frame as Braille', () => {
     const f = field(40, 16, 8);
     const g = frameGrid(packField(f), 40, 16, defaultMotion(), 0);

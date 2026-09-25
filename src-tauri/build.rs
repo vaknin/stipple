@@ -13,6 +13,8 @@ const COMMANDS: &[&str] = &[
     "set_wallpaper",
     "add_to_theme_backgrounds",
     "theme_colors",
+    "sun_location",
+    "use_stipple_theme",
 ];
 
 fn main() {

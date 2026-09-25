@@ -18,7 +18,7 @@ pub struct Monitor {
 
 pub fn list() -> Result<Vec<Monitor>, String> {
     let hyprctl = find_in_path("hyprctl").unwrap_or_else(|| "/usr/bin/hyprctl".into());
-    let out = run(&hyprctl, &["monitors", "-j"], None)?;
+    let out = run(&hyprctl, &["monitors", "-j"], None, &[])?;
     parse(&out)
 }
 

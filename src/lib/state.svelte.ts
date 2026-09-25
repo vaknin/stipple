@@ -2,48 +2,28 @@
 //
 // One gesture is one history step, as in Typist: discrete controls commit right away, sliders
 // commit on release (same label within 600 ms merges), a crop commits on Done. The snapshot holds
-// both the doc and the wallpaper options, so an art area or colour change undoes too.
+// both the doc and the wallpaper options, so an art area or colour change undoes too, and the
+// motion and Theme settings.
 
-import type { AsciiMethod, Grid, Mode } from '$typist/convert.js';
-import { cleanCrop } from '$typist/crop.js';
+import { clockSun, defaultTheme, sun, themeAt, type HourColours, type Palette, type Sun, type ThemeOpts } from '$palette';
+import type { Grid } from '$typist/convert.js';
 import { History } from '$typist/history.js';
 import type { Photo } from '$typist/imageio.js';
-import { CROP_DEFAULTS, cropSize, TONE_DEFAULTS, type Crop, type Tone } from '$typist/tone.js';
-import { autoCols, cellAspect, fileColours, rowsFor } from './engine/engine';
-import { clampBox, COLS_MAX, COLS_MIN, innerRect, type Box, type LayoutIn } from './layout';
+import { cropSize, type Crop } from '$typist/tone.js';
+import {
+  cropAspectFor, DEFAULT_COLOURS, defaultDoc, defaultWall, effectiveCrop, type Doc, type Wall,
+} from './doc';
+import { autoCols, cellAspect, rowsFor } from './engine/engine';
+import { clampBox, COLS_MAX, COLS_MIN, type Box, type LayoutIn } from './layout';
 import { defaultMotion, motionFor, supportFor, type Motion, type Support } from './motion';
 import type { Colours } from './render';
-import type { Monitor, ThemeColors } from './tauri';
+import type { Monitor, SunLocation, ThemeColors } from './tauri';
 
-/** The styles Stipple offers (Typist's Blocks is not one of them). */
-export type Style = Exclude<Mode, 'blocks'>;
+export * from './doc';
 
-/** The tone controls Stipple shows; the rest of Typist's tone stays at its defaults. */
-export type ToneControls = Pick<Tone, 'auto' | 'brightness' | 'contrast' | 'invert'>;
+export interface Snapshot { doc: Doc; wall: Wall; motion: Motion; theme: ThemeOpts }
 
-export interface Doc {
-  mode: Style;
-  ascii: AsciiMethod;
-  /** null = auto (from the output size). */
-  cols: number | null;
-  tone: ToneControls;
-  crop: Crop;
-}
-
-export interface Wall {
-  /** The output size: the monitor's. */
-  width: number;
-  height: number;
-  /** null = Typist's invert rule. */
-  ink: string | null;
-  paper: string | null;
-  /** The art's rectangle on the screen (fractions, Custom); null = the whole screen (Fill). */
-  box: Box | null;
-  /** Colour outside the art's box; null = the paper colour. */
-  surround: string | null;
-}
-
-export interface Snapshot { doc: Doc; wall: Wall; motion: Motion }
+const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 
 export interface LoadedPhoto {
   photo: Photo;
@@ -59,85 +39,17 @@ export interface Notice {
   action?: { label: string; run: () => void | Promise<void> };
 }
 
-const { auto, brightness, contrast, invert } = TONE_DEFAULTS;
-export const TONE_CONTROL_DEFAULTS: Readonly<ToneControls> = Object.freeze({ auto, brightness, contrast, invert });
-
-export const defaultDoc = (): Doc => ({
-  mode: 'ascii', ascii: 'shape', cols: null, tone: { ...TONE_CONTROL_DEFAULTS, invert: true }, crop: { ...CROP_DEFAULTS },
-});
-
-export const defaultWall = (): Wall => ({
-  width: 1920, height: 1080, ink: null, paper: null, box: null, surround: null,
-});
-
-const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
-
-type Raw = Record<string, unknown>;
-const obj = (v: unknown): Raw => (v && typeof v === 'object' ? (v as Raw) : {});
-const oneOf = <T extends string>(v: unknown, ok: readonly T[], def: T): T => (ok.includes(v as T) ? (v as T) : def);
-const num = (v: unknown, def: number) => (typeof v === 'number' && Number.isFinite(v) ? v : def);
-const hex = (v: unknown): string | null => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : null);
-
-/** A document from a sidecar's `doc` (older or partial ones get the defaults). */
-export function docFrom(raw: unknown): Doc {
-  const r = obj(raw), t = obj(r.tone), d = defaultDoc();
-  const tone = { ...d.tone };
-  for (const k of Object.keys(tone) as (keyof ToneControls)[]) {
-    const v = t[k];
-    if (typeof v === typeof tone[k] && (typeof v !== 'number' || Number.isFinite(v))) (tone as Raw)[k] = v;
-  }
-  const cols = typeof r.cols === 'number' && Number.isFinite(r.cols) ? clamp(Math.round(r.cols), COLS_MIN, COLS_MAX) : null;
-  return {
-    // Blocks (no longer offered) opens as the default style
-    mode: oneOf(r.mode, ['braille', 'ascii'] as const, d.mode),
-    ascii: oneOf(r.ascii, ['shape', 'ramp'] as const, d.ascii),
-    cols,
-    tone,
-    crop: squareCrop(cleanCrop(obj(r.crop) as Partial<Crop>)),
-  };
-}
-
-/** Wallpaper options from a sidecar's `wallpaper` (an older one's margin and Fit are dropped). */
-export function wallFrom(raw: unknown): Wall {
-  const r = obj(raw), d = defaultWall();
-  const b = r.box ? obj(r.box) : null;
-  const size = (v: unknown, def: number) => clamp(Math.round(num(v, def)), 16, 16384);
-  return {
-    width: size(r.width, d.width),
-    height: size(r.height, d.height),
-    ink: hex(r.ink),
-    paper: hex(r.paper),
-    box: b ? clampBox({ x: num(b.x, NaN), y: num(b.y, NaN), w: num(b.w, NaN), h: num(b.h, NaN) }) : null,
-    surround: hex(r.surround),
-  };
-}
-
-/**
- * The crop's aspect (width / height): the art's rectangle's, so the art fills it. Rounded so a
- * change that keeps the shape keeps the converter's cached samples.
- */
-export function cropAspectFor(wall: Pick<Wall, 'width' | 'height' | 'box'>): number {
-  const r = innerRect(wall);
-  return Math.round((r.w / r.h) * 1e6) / 1e6;
-}
-
-/** The crop the engine samples: the doc's, with the aspect when it is not square. */
-export function effectiveCrop(doc: Pick<Doc, 'crop'>, wall: Parameters<typeof cropAspectFor>[0]): Crop {
-  const crop = squareCrop(doc.crop);
-  const a = cropAspectFor(wall);
-  return a === 1 ? crop : { ...crop, aspect: a };
-}
-
-/** A crop without its aspect (the doc keeps only the position; the aspect is derived). */
-export function squareCrop(c: Crop): Crop {
-  const { aspect: _aspect, ...rest } = c;
-  return rest;
+/** The sun at `date`: from the weather location's coordinates, else up from 06:00 to 18:00. */
+export function sunAt(date: Date, place: SunLocation | null): Sun {
+  return place?.latitude != null && place.longitude != null ? sun(date, place.latitude, place.longitude) : clockSun(date);
 }
 
 class AppState {
   doc: Doc = $state(defaultDoc());
   wall: Wall = $state(defaultWall());
   motion: Motion = $state(defaultMotion());
+  /** The Stipple theme's settings (palette.mjs): how the desktop's colours follow the sun. */
+  themeOpts: ThemeOpts = $state(defaultTheme());
   /** The preview plays the motion. */
   playing = $state(true);
   /** Columns keyframes built so far for the current settings (null: none being built). */
@@ -152,7 +64,16 @@ class AppState {
   loading = $state(false);
   busy: string | null = $state(null);
   monitors: Monitor[] = $state.raw([]);
-  theme: ThemeColors | null = $state.raw(null);
+  /** The current Omarchy theme's colours (Wallpaper > Theme colours). */
+  omarchy: ThemeColors | null = $state.raw(null);
+  /** The weather location, for the sun (null: none, or no answer yet). */
+  sunPlace: SunLocation | null = $state.raw(null);
+  /** The Theme tab previews this minute of today (null: now). Not a history step. */
+  previewMinute: number | null = $state(null);
+  /** The Theme tab is open: the preview shows the colours of the hour. */
+  themeShown = $state(false);
+  /** Now, to the minute, while the Theme tab is open (it ticks it). */
+  clock = $state(Date.now());
   notice: Notice | null = $state.raw(null);
   canUndo = $state(false);
   canRedo = $state(false);
@@ -185,12 +106,23 @@ class AppState {
   rows = $derived(rowsFor(this.cols, this.doc.mode, this.cropAspect));
   cellAspect = $derived(cellAspect(this.doc.mode));
   isAuto = $derived(this.doc.cols == null || this.doc.cols === this.autoCols);
-  /** The colours drawn: custom picks, else Typist's file colours for the invert setting. */
+  /** The colours drawn: custom picks, else the default colours. Which way the art goes follows them. */
   colours: Colours = $derived.by(() => {
-    const rule = fileColours(this.doc.tone.invert);
-    const paper = this.wall.paper ?? rule.paper;
-    return { ink: this.wall.ink ?? rule.ink, paper, surround: this.wall.surround ?? paper };
+    const paper = this.wall.paper ?? DEFAULT_COLOURS.paper;
+    return { ink: this.wall.ink ?? DEFAULT_COLOURS.ink, paper, surround: this.wall.surround ?? paper };
   });
+
+  /** The moment the Theme tab previews. */
+  previewDate: Date = $derived.by(() => {
+    const d = new Date(this.clock);
+    if (this.previewMinute != null) d.setHours(0, this.previewMinute, 0, 0);
+    return d;
+  });
+  sunNow: Sun = $derived(sunAt(this.previewDate, this.sunPlace));
+  /** The wallpaper's colours and the desktop's palette at the previewed moment. */
+  themed: { wall: HourColours; palette: Palette } = $derived(themeAt(this.colours, this.themeOpts, this.sunNow));
+  /** The colours the preview draws: the hour's while the Theme tab previews, else the saved ones. */
+  shownColours: Colours = $derived(this.themeShown || this.previewMinute != null ? this.themed.wall : this.colours);
 
   /** The motion as it plays and is saved: effects this style cannot play are off. */
   playMotion: Motion = $derived(motionFor(this.motion, this.support));
@@ -198,9 +130,10 @@ class AppState {
   /**
    * The wallpaper file these settings were last saved to (or reopened from): `key` is everything
    * that changes the image (see imageKey), `motion` the motion saved with it. Only the motion
-   * changed: Save rewrites that file's sidecar instead of making a new file.
+   * changed: Save rewrites that file's sidecar instead of making a new file. `theme` likewise
+   * (the Theme settings are not part of the image: the PNG keeps the day's colours).
    */
-  saved: { path: string; key: string; motion: string } | null = null;
+  saved: { path: string; key: string; motion: string; theme: string } | null = $state.raw(null);
 
   imageKey(): string {
     const { doc, wall } = this.snapshot();
@@ -208,7 +141,7 @@ class AppState {
   }
 
   snapshot(): Snapshot {
-    return $state.snapshot({ doc: this.doc, wall: this.wall, motion: this.motion }) as Snapshot;
+    return $state.snapshot({ doc: this.doc, wall: this.wall, motion: this.motion, theme: this.themeOpts }) as Snapshot;
   }
 
   /** Record a finished change (app.js commit): a merged burst ending where it began is no step. */
@@ -234,6 +167,7 @@ class AppState {
     this.doc = s.doc;
     this.wall = s.wall;
     this.motion = s.motion;
+    this.themeOpts = s.theme;
   }
 
   undo() { this.#restore(this.history.undo()); }
@@ -268,9 +202,12 @@ class AppState {
     this.commit(label);
   }
 
-  setInvert(on: boolean) {
-    this.doc.tone.invert = on;
-    this.commit('Invert');
+  /** Ink and paper change places: the art is drawn the other way round, still a positive picture. */
+  swapColours() {
+    const { ink, paper } = this.colours;
+    this.wall.ink = paper;
+    this.wall.paper = ink;
+    this.commit('Swap colours');
   }
 
   say(kind: Notice['kind'], text: string, action?: Notice['action']) {

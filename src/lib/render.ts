@@ -74,14 +74,13 @@ export async function renderPng(grid: Grid, layout: Layout, colours: Colours, wi
   return blob;
 }
 
-/** Relative luminance of #rrggbb (WCAG), for the "art comes out negative" warning. */
-export function luminance(hex: string): number {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) return 0.5;
-  const n = parseInt(m[1]!, 16);
-  const lin = (c: number) => {
-    const s = c / 255;
-    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+/**
+ * The art's ink coverage at the output size, as RGB (R = G = B = coverage, 0 around the art): the
+ * night's mask, which the plugin colours with the hour's ink and paper (wall.frag mode 0).
+ */
+export function renderCoverage(grid: Grid, layout: Layout, width: number, height: number): Uint8Array {
+  const img = rasterize(new Surface(width, height), grid, layout, { ink: '#ffffff', paper: '#000000' }, { font: FONT, dotR: DOT_R });
+  const d = img.data, out = new Uint8Array(width * height * 3);
+  for (let i = 0, n = width * height; i < n; i++) out[i * 3] = out[i * 3 + 1] = out[i * 3 + 2] = d[i * 4]!;
+  return out;
 }

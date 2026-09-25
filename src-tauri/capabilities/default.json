@@ -18,6 +18,8 @@
     "allow-set-wallpaper",
     "allow-add-to-theme-backgrounds",
     "allow-theme-colors",
+    "allow-sun-location",
+    "allow-use-stipple-theme",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "dialog:allow-open"

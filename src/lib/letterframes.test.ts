@@ -27,6 +27,21 @@ describe('letter frames', () => {
     expect([at(5, 2), at(6, 3)]).toEqual([4, 4]);
   });
 
+  test('the night keyframes ride in G with one glyph table', () => {
+    const gs = [grid(3, 2, 'a b'), grid(2, 2, 'zz')];
+    const ns = [grid(3, 2, 'b#a'), grid(2, 2, ' a')];
+    const p = packFrames(gs, gs.map((_, i) => lay(i + 1)), 7, ns);
+    expect(p.glyphs).toEqual(['a', 'b', 'z', '#'].map(c => c.codePointAt(0)!));
+    const day = (x: number, y: number) => p.rgb[(y * p.width + x) * 3];
+    const night = (x: number, y: number) => p.rgb[(y * p.width + x) * 3 + 1];
+    expect([day(0, 0), day(1, 0), day(2, 0)]).toEqual([1, 0, 2]);
+    expect([night(0, 0), night(1, 0), night(2, 0)]).toEqual([2, 4, 1]);
+    expect([night(3, 0), night(4, 0)]).toEqual([0, 1]);
+    // without a night G stays empty; a night of other sizes is refused
+    expect(packFrames(gs, gs.map((_, i) => lay(i + 1)), 7).rgb.filter((_, i) => i % 3 === 1).every(v => v === 0)).toBe(true);
+    expect(() => packFrames(gs, gs.map((_, i) => lay(i + 1)), 7, [ns[0]!])).toThrow();
+  });
+
   test('more than 255 letters is refused', () => {
     const many = String.fromCodePoint(...Array.from({ length: 300 }, (_, i) => 0x4e00 + i));
     expect(() => packFrames([grid(300, 1, many)], [lay(1)])).toThrow();

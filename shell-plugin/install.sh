@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # Install Stipple's animated wallpaper plugin into omarchy-shell:
 #   compile the shaders, link this repo's plugin folder into ~/.config/omarchy/plugins, enable it,
-#   and restart the shell if the plugin did not come up on its own.
+#   create the Stipple theme (~/.config/omarchy/themes/stipple, whose colors.toml the plugin keeps
+#   rewriting), and restart the shell if the plugin did not come up on its own.
 # Re-run after changing shaders/*.frag (the compiled .qsb files are not in git).
 #   shell-plugin/install.sh              install or update
-#   shell-plugin/install.sh --uninstall  disable it and remove the link (wallpapers stay still PNGs)
+#   shell-plugin/install.sh --uninstall  disable it and remove the link (wallpapers stay still PNGs;
+#                                        the theme folder stays, pick another theme first)
 set -euo pipefail
 
 id=kivan.stipple
 src=$(cd "$(dirname "$0")/$id" && pwd)
 dest="$HOME/.config/omarchy/plugins/$id"
+theme="$HOME/.config/omarchy/themes/stipple"
 qsb=/usr/lib/qt6/bin/qsb
 
 say() { printf '%s\n' "$*"; }
@@ -41,6 +44,16 @@ if [[ -e $dest && ! -L $dest ]]; then
 fi
 ln -sfn "$src" "$dest"
 say "Linked $dest -> $src"
+
+# The theme: a plain folder (a .git in it would make Omarchy treat it as a stranger's). Until the
+# plugin has seen a Stipple wallpaper, its colours are Stipple's default ink on paper.
+[[ -e $theme/.git ]] && fail "$theme is a git checkout; Omarchy would ignore parts of it"
+mkdir -p "$theme"
+if [[ ! -f $theme/colors.toml ]]; then
+  command -v bun >/dev/null || fail "bun not found: it writes the theme's first colors.toml"
+  bun --eval "import * as P from '$src/palette.mjs'; await Bun.write('$theme/colors.toml', P.colorsToml(P.paletteFor({ ink: '#f2f2f0', paper: '#111113' }, P.defaultTheme())))"
+  say "Created the Stipple theme in $theme"
+fi
 
 omarchy-shell shell rescanPlugins >/dev/null
 # the rescan finishes in the background

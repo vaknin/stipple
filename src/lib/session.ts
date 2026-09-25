@@ -23,13 +23,14 @@ let queue: Promise<void> = Promise.resolve();
 function current(): string | null {
   const l = app.loaded;
   if (!l) return null;
-  const { doc, wall, motion } = app.snapshot();
+  const { doc, wall, motion, theme } = app.snapshot();
   return JSON.stringify({
     format: SESSION_FORMAT,
     source: { path: l.path, name: l.name },
     doc,
     wallpaper: wall,
     motion,
+    theme,
   });
 }
 
