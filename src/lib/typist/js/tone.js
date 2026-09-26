@@ -766,47 +766,6 @@ export function guidedFilter(I, W, H, r, eps) {
   return a;
 }
 
-/**
- * Flat background connected to the border: grown from low-gradient border samples through
- * neighbours that differ by < tol (a sky's slow gradient joins, a subject's edge does not).
- * Returns a feathered 0..1 mask, or null when there is no subject to separate it from.
- */
-function borderBackground(V, W, H, tol = 0.035) {
-  const N = W * H;
-  if (W < 6 || H < 6) return null;
-  const S = Float32Array.from(V);
-  boxBlur(S, W, H, 1, 1);
-  const bg = new Uint8Array(N);
-  const stack = new Int32Array(N);
-  let sp = 0;
-  const flat = i => {
-    const x = i % W, y = (i / W) | 0;
-    const l = S[y * W + (x > 0 ? x - 1 : x)], r = S[y * W + (x < W - 1 ? x + 1 : x)];
-    const u = S[(y > 0 ? y - 1 : y) * W + x], d = S[(y < H - 1 ? y + 1 : y) * W + x];
-    return Math.abs(r - l) + Math.abs(d - u) < 2.5 * tol;
-  };
-  const seed = i => { if (!bg[i] && flat(i)) { bg[i] = 1; stack[sp++] = i; } };
-  for (let x = 0; x < W; x++) { seed(x); seed((H - 1) * W + x); }
-  for (let y = 0; y < H; y++) { seed(y * W); seed(y * W + W - 1); }
-  while (sp) {
-    const i = stack[--sp], x = i % W, v = S[i];
-    const nb = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, i - W, i + W];
-    for (let k = 0; k < 4; k++) {
-      const j = nb[k];
-      if (j < 0 || j >= N || bg[j]) continue;
-      if (Math.abs(S[j] - v) < tol && flat(j)) { bg[j] = 1; stack[sp++] = j; }
-    }
-  }
-  let n = 0;
-  for (let i = 0; i < N; i++) n += bg[i];
-  if (n < 0.03 * N || n > 0.85 * N) return null;   // no background, or no subject
-  const m = new Float32Array(N);
-  for (let i = 0; i < N; i++) m[i] = bg[i];
-  boxBlur(m, W, H, 1, 1);
-  for (let i = 0; i < N; i++) m[i] = bg[i] ? m[i] : 0;   // feather inward only: the subject keeps its rim
-  return m;
-}
-
 /** Running min and max over a (2r + 1)^2 window (separable, borders clamped). */
 function localMinMax(V, W, H, r) {
   const N = W * H;
@@ -843,7 +802,6 @@ function photoAnalysis(img, t) {
   const wC = radialMap(W, H, 2, 0.2);
   const I = new Float32Array(N);
   const [lo, hi] = levelled(img, t, wC, 1, I);
-  const photoPol = t.invert ? Float32Array.from(I) : I;
   if (t.invert) for (let i = 0; i < N; i++) I[i] = 1 - (A ? A[i] : 1) * I[i];
 
   // base / detail split at a scale tied to the grid: ~8% of the long side
@@ -888,16 +846,14 @@ function photoAnalysis(img, t) {
   }
   lut[NL + 1] = lut[NL];
   const [mn, mx] = localMinMax(I, W, H, 2);
-  // dark mode: the flat backdrop joined to the border (used at the very end)
-  const bg = t.invert ? borderBackground(photoPol, W, H) : null;
-  return { lo, hi, I, B, D, E, e90, S, wS, m, sig, lut, mn, mx, bg };
+  return { lo, hi, I, B, D, E, e90, S, wS, m, sig, lut, mn, mx };
   });
 }
 
 function tonePhoto(img, t, { target, boost }) {
   const P = PHOTO;
   const { W, H } = img, N = W * H;
-  const { lo, hi, I, B, D, E, e90, S, wS, m, sig, lut, mn, mx, bg } = photoAnalysis(img, t);
+  const { lo, hi, I, B, D, E, e90, S, wS, m, sig, lut, mn, mx } = photoAnalysis(img, t);
   const NL = 256;
   const detailScale = t.detail / 0.35;
   const gain = (P.gain + P.gainSmall * boost) * detailScale * 0.35;
@@ -974,10 +930,9 @@ function tonePhoto(img, t, { target, boost }) {
     else { applyPow(out, e); for (let i = 0; i < N; i++) out[i] = clamp01(out[i] + sh); }
   }
 
-  // dark mode: a flat backdrop joined to the border is paper (no dots), not a sheet of lit dots
-  if (t.invert) {
-    if (bg) for (let i = 0; i < N; i++) out[i] += bg[i] * (1 - out[i]);
-  }
+  // Stipple patch: upstream's dark mode turned a flat backdrop joined to the border into paper
+  // (borderBackground). Its flood fill crossed soft subject edges: on most photos it covered the
+  // frame and gave up, on others it emptied most of the scene. Dropped; dark mode draws it all.
   return { out, stats: { lo, hi, gamma: g, m } };
 }
 
