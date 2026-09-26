@@ -1,9 +1,9 @@
 //! Reading source photos and writing wallpapers. Every write creates a new file: nothing is ever
-//! overwritten except a wallpaper's own sidecar and dot field, and the app's session file.
+//! overwritten except a wallpaper's own sidecar and motion textures, and the app's session file.
 //!
-//! A wallpaper `<dir>/<stem>.png` has its settings in `<dir>/<stem>.stipple.json` and, for Dots, its
-//! dot field (for the animated wallpaper) in `<dir>/.stipple/<stem>/field.png`: hidden, so
-//! `omarchy theme bg next` (which rotates every image in the folder) never shows it.
+//! A wallpaper `<dir>/<stem>.png` has its settings in `<dir>/<stem>.stipple.json` and its motion
+//! textures (for the animated wallpaper) in `<dir>/.stipple/<stem>/<name>.png`: hidden, so
+//! `omarchy theme bg next` (which rotates every image in the folder) never shows them.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Write};
@@ -14,7 +14,7 @@ use crate::sys::home;
 pub const MAX_READ: u64 = 64 * 1024 * 1024;
 pub const MAX_PNG: usize = 256 * 1024 * 1024;
 pub const MAX_SIDECAR: usize = 32 * 1024 * 1024;
-/// Largest dot field side (2 x 4096 columns, layout.ts COLS_MAX).
+/// Largest motion texture side (frames.png is 4096 wide and grows downwards).
 pub const MAX_FIELD: u32 = 8192;
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "cr3"];
 const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
@@ -190,9 +190,11 @@ pub fn sidecar_path(png: &Path) -> Result<PathBuf, String> {
     Ok(png.with_file_name(format!("{}.stipple.json", png_stem(png)?)))
 }
 
-/// The textures the animated wallpaper reads: the Dots field, the Letters Columns keyframes and
+/// The textures the animated wallpaper reads: the Columns keyframes and
 /// their glyph atlas, and the night's coverage (the art drawn the other way round, for an hour
 /// whose colours have crossed over).
+/// `field` is an older Dots wallpaper's dot field: nothing writes it now, but a re-save or a copy
+/// still cleans it up or takes it along.
 pub const MOTION_FILES: &[&str] = &["field", "frames", "glyphs", "night"];
 
 /// `<dir>/.stipple/<stem>/<name>.png` for `<dir>/<stem>.png`, `name` one of MOTION_FILES.
@@ -284,16 +286,16 @@ pub fn read_session(path: &Path) -> Result<Option<String>, String> {
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Encode an RGB dot field (3 bytes per dot, row-major) as a PNG: 8 bits, no colour profile, so
+/// Encode an RGB motion texture (3 bytes per texel, row-major) as a PNG: 8 bits, no colour profile, so
 /// the plugin's shader reads back exactly these bytes.
 pub fn encode_field(size: (u32, u32), rgb: &[u8]) -> Result<Vec<u8>, String> {
     let (w, h) = size;
     if !(1..=MAX_FIELD).contains(&w) || !(1..=MAX_FIELD).contains(&h) {
-        return Err(format!("the dot field is {w}x{h}, at most {MAX_FIELD} a side"));
+        return Err(format!("the motion texture is {w}x{h}, at most {MAX_FIELD} a side"));
     }
     if rgb.len() != w as usize * h as usize * 3 {
         return Err(format!(
-            "the dot field has {} bytes, expected {}",
+            "the motion texture has {} bytes, expected {}",
             rgb.len(),
             w as usize * h as usize * 3
         ));
@@ -302,9 +304,9 @@ pub fn encode_field(size: (u32, u32), rgb: &[u8]) -> Result<Vec<u8>, String> {
     let mut enc = png::Encoder::new(&mut out, w, h);
     enc.set_color(png::ColorType::Rgb);
     enc.set_depth(png::BitDepth::Eight);
-    let mut writer = enc.write_header().map_err(|e| format!("field.png: {e}"))?;
-    writer.write_image_data(rgb).map_err(|e| format!("field.png: {e}"))?;
-    writer.finish().map_err(|e| format!("field.png: {e}"))?;
+    let mut writer = enc.write_header().map_err(|e| format!("motion texture: {e}"))?;
+    writer.write_image_data(rgb).map_err(|e| format!("motion texture: {e}"))?;
+    writer.finish().map_err(|e| format!("motion texture: {e}"))?;
     Ok(out)
 }
 

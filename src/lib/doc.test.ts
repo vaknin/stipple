@@ -44,4 +44,15 @@ describe('older files keep their look without Invert', () => {
     expect(d.tone).toEqual({ ...defaultDoc().tone, auto: false, brightness: 0.2 });
     expect('invert' in d.tone).toBe(false);
   });
+
+  test('a Dots or Blocks doc opens as Letters at the auto width', () => {
+    for (const mode of ['braille', 'blocks']) {
+      const d = docFrom({ mode, cols: 150, ascii: 'ramp' });
+      expect(d.cols).toBeNull();
+      expect(d.ascii).toBe('ramp');
+      expect('mode' in d).toBe(false);
+    }
+    expect(docFrom({ mode: 'ascii', cols: 150 }).cols).toBe(150);
+    expect(docFrom({ cols: 150 }).cols).toBe(150);
+  });
 });

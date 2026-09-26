@@ -50,8 +50,7 @@ async function shotFull(name = 'full.png') {
  * Simulate a Brightness drag: one slider step per animation frame (the window must be visible,
  * WebKit pauses frames otherwise). Returns p50 / p95 of run, draw and frame interval.
  */
-async function bench(mode: 'braille' | 'ascii', cols: number, steps = 60) {
-  app.doc.mode = mode;
+async function bench(cols: number, steps = 60) {
   app.doc.cols = cols;
   app.doc.tone.brightness = 0;
   await settle(4);
@@ -66,7 +65,7 @@ async function bench(mode: 'braille' | 'ascii', cols: number, steps = 60) {
   }
   await settle(3);
   const wall = performance.now() - t0;
-  const out = { mode, cols, rows: app.rows, steps, fps: +(steps / (wall / 1000)).toFixed(1),
+  const out = { cols, rows: app.rows, steps, fps: +(steps / (wall / 1000)).toFixed(1),
     run: perf.stats('run'), draw: perf.stats('draw'), frame: perf.stats('frame') };
   app.doc.tone.brightness = 0;
   return out;

@@ -31,7 +31,7 @@ fi
 [[ -x $qsb ]] || fail "$qsb not found (it comes with qt6-shadertools)"
 command -v inotifywait >/dev/null || fail "inotifywait not found (inotify-tools): the plugin watches the background with it"
 
-# GLSL 330 / ES 300: older GLSL has no uint, which the dot hash needs
+# GLSL 330 / ES 300: older GLSL has no texelFetch or integer arithmetic, which the glyph lookup uses
 for f in "$src"/shaders/*.frag; do
   "$qsb" --glsl "330,300 es" -o "$f.qsb" "$f"
   say "Compiled shaders/${f##*/}.qsb"

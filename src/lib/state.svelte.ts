@@ -13,9 +13,9 @@ import { cropSize, type Crop } from '$typist/tone.js';
 import {
   cropAspectFor, DEFAULT_COLOURS, defaultDoc, defaultWall, effectiveCrop, type Doc, type Wall,
 } from './doc';
-import { autoCols, cellAspect, rowsFor } from './engine/engine';
+import { autoCols, rowsFor } from './engine/engine';
 import { clampBox, COLS_MAX, COLS_MIN, type Box, type LayoutIn } from './layout';
-import { defaultMotion, motionFor, supportFor, type Motion, type Support } from './motion';
+import { defaultMotion, type Motion } from './motion';
 import type { Colours } from './render';
 import type { Monitor, SunLocation, ThemeColors } from './tauri';
 
@@ -94,17 +94,14 @@ class AppState {
     },
   });
 
-  /** Which effects the current style can play. */
-  support: Support = $derived(supportFor(this.doc));
   layoutIn: LayoutIn = $derived({ width: this.wall.width, height: this.wall.height, box: this.wall.box });
   /** Crop width / height (1 = square). */
   cropAspect = $derived(cropAspectFor(this.wall));
   /** The crop the engine samples (see effectiveCrop). */
   crop: Crop = $derived(effectiveCrop(this.doc, this.wall));
-  autoCols = $derived(autoCols(this.doc.mode, this.layoutIn, this.cropAspect));
+  autoCols = $derived(autoCols(this.layoutIn, this.cropAspect));
   cols = $derived(clamp(this.doc.cols ?? this.autoCols, COLS_MIN, COLS_MAX));
-  rows = $derived(rowsFor(this.cols, this.doc.mode, this.cropAspect));
-  cellAspect = $derived(cellAspect(this.doc.mode));
+  rows = $derived(rowsFor(this.cols, this.cropAspect));
   isAuto = $derived(this.doc.cols == null || this.doc.cols === this.autoCols);
   /** The colours drawn: custom picks, else the default colours. Which way the art goes follows them. */
   colours: Colours = $derived.by(() => {
@@ -123,9 +120,6 @@ class AppState {
   themed: { wall: HourColours; palette: Palette } = $derived(themeAt(this.colours, this.themeOpts, this.sunNow));
   /** The colours the preview draws: the hour's while the Theme tab previews, else the saved ones. */
   shownColours: Colours = $derived(this.themeShown || this.previewMinute != null ? this.themed.wall : this.colours);
-
-  /** The motion as it plays and is saved: effects this style cannot play are off. */
-  playMotion: Motion = $derived(motionFor(this.motion, this.support));
 
   /**
    * The wallpaper file these settings were last saved to (or reopened from): `key` is everything

@@ -1,34 +1,10 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { createConverter, type DotField } from '$typist/convert.js';
-import { ditherDots, encodeBraille } from '$typist/dither.js';
 import { COLS_MAX, COLS_MIN } from './layout';
 import {
-  cleanMotion, COLUMN_CELLS_MAX, columnFrameAt, columnKeyframes, columnPlan, columnRate, columnStart, defaultMotion, frameDots, frameGrid, hash, motionFor, motionFps, packField,
-  type Motion,
+  anyMotion, cleanMotion, COLUMN_CELLS_MAX, columnFrameAt, columnKeyframes, columnPlan, columnRate, columnStart, defaultMotion,
+  motionFps, type Motion,
 } from './motion';
-
-/** wall.frag's hash in exact uint32 arithmetic. */
-function glslHash(x: number, y: number, z: number): number {
-  const M = 0xffffffffn;
-  let h = (BigInt(x) * 374761393n + BigInt(y) * 668265263n + BigInt(z) * 2246822519n) & M;
-  h = ((h ^ (h >> 13n)) * 1274126177n) & M;
-  h ^= h >> 16n;
-  return Number(h >> 8n) / 16777216;
-}
-
-/** Deterministic pseudo-random numbers in [0, 1). */
-function rng(seed: number) {
-  let s = seed >>> 0;
-  return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
-}
-
-function field(W: number, H: number, seed: number): DotField {
-  const r = rng(seed);
-  const L = new Float32Array(W * H);
-  for (let i = 0; i < L.length; i++) L[i] = r();
-  return { width: W, height: H, L, dots: ditherDots(L, W, H, 'atkinson'), forced: new Uint8Array(W * H) };
-}
 
 const with_ = (patch: (m: Motion) => void): Motion => {
   const m = defaultMotion();
@@ -36,101 +12,22 @@ const with_ = (patch: (m: Motion) => void): Motion => {
   return m;
 };
 
-describe('shader mirror', () => {
-  test('hash is the shader hash', () => {
-    const r = rng(7);
-    for (let i = 0; i < 2000; i++) {
-      const x = Math.floor(r() * 5000), y = Math.floor(r() * 5000), z = Math.floor(r() * 4294967295);
-      expect(hash(x, y, z)).toBe(glslHash(x, y, z));
-    }
-  });
-
-  test('without Twinkle the saved dots are drawn as they are', () => {
-    const f = field(120, 80, 4);
-    const p = packField(f);
-    expect(Array.from(frameDots(p, 120, 80, defaultMotion(), 3))).toEqual(Array.from(f.dots));
-  });
-
-  test('twinkle flips one dot in about `amount` of the cells, the same at the same time', () => {
-    const W = 400, H = 260, f = field(W, H, 5);
-    const p = packField(f);
-    const m = with_(m => { m.twinkle.on = true; m.twinkle.amount = 0.05; });
-    const a = frameDots(p, W, H, m, 1.3);
-    const b = frameDots(p, W, H, m, 1.3);
-    expect(Array.from(a)).toEqual(Array.from(b));
-    let flipped = 0;
-    const cells = (W / 2) * (H / 4);
-    for (let r = 0; r < H / 4; r++) {
-      for (let c = 0; c < W / 2; c++) {
-        let n = 0;
-        for (let k = 0; k < 8; k++) {
-          const i = (r * 4 + (k >> 1)) * W + c * 2 + (k & 1);
-          if (a[i] !== f.dots[i]) n++;
-        }
-        expect(n).toBeLessThanOrEqual(1);
-        flipped += n;
-      }
-    }
-    expect(flipped / cells).toBeGreaterThan(0.035);
-    expect(flipped / cells).toBeLessThan(0.065);
-    // another tick picks other cells
-    expect(Array.from(frameDots(p, W, H, m, 1.3 + 1 / m.twinkle.rate))).not.toEqual(Array.from(a));
-  });
-
-  test('the night dots ride in G and twinkle as the day’s do', () => {
-    const W = 200, H = 120, day = field(W, H, 4), night = field(W, H, 9);
-    const p = packField(day, night);
-    expect(Array.from(frameDots(p, W, H, defaultMotion(), 3))).toEqual(Array.from(day.dots));
-    expect(Array.from(frameDots(p, W, H, defaultMotion(), 3, undefined, 1))).toEqual(Array.from(night.dots));
-    expect(Array.from(packField(day)).filter((_, i) => i % 3 === 1).every(v => v === 0)).toBe(true);
-    // the same cells flip on both sides
-    const m = with_(m => { m.twinkle.on = true; m.twinkle.amount = 0.05; });
-    const a = frameDots(p, W, H, m, 1.3), n = frameDots(p, W, H, m, 1.3, undefined, 1);
-    for (let i = 0; i < W * H; i++) expect(a[i] !== day.dots[i]).toBe(n[i] !== night.dots[i]);
-    expect(() => packField(day, field(W, H + 4, 1))).toThrow();
-  });
-
-  test('frameGrid encodes the frame as Braille', () => {
-    const f = field(40, 16, 8);
-    const g = frameGrid(packField(f), 40, 16, defaultMotion(), 0);
-    expect(Array.from(g.cp)).toEqual(Array.from(encodeBraille(f.dots, 40, 16).cp));
-    expect([g.cols, g.rows, g.mode]).toEqual([20, 4, 'braille']);
-  });
-
-  test('the converter field: the saved dots, drawn as they are', () => {
-    const w = 300, h = 300, data = new Uint8ClampedArray(w * h * 4);
-    for (let y = 0, p = 0; y < h; y++) {
-      for (let x = 0; x < w; x++, p += 4) {
-        const v = Math.round(255 * (0.5 + 0.5 * Math.sin(x / 17) * Math.cos(y / 23)));
-        data[p] = data[p + 1] = data[p + 2] = v;
-        data[p + 3] = 255;
-      }
-    }
-    const conv = createConverter();
-    conv.setSource({ width: w, height: h, data });
-    const g = conv.run({}, { mode: 'braille', cols: 60, rows: 35, dither: 'atkinson', field: true });
-    const f = g.field!;
-    expect([f.width, f.height]).toEqual([120, 140]);
-    expect(Array.from(encodeBraille(f.dots, f.width, f.height).cp)).toEqual(Array.from(g.cp));
-    expect(Array.from(frameDots(packField(f), f.width, f.height, defaultMotion(), 7))).toEqual(Array.from(f.dots));
-    expect(conv.run({}, { mode: 'ascii', cols: 20, rows: 10 }).field).toBeNull();
-  });
-});
-
 describe('settings', () => {
-  test('frame rate', () => {
+  test('still by default', () => {
     expect(motionFps(defaultMotion())).toBe(0);
-    expect(motionFps(with_(m => { m.twinkle.on = true; m.twinkle.rate = 6; }))).toBe(6);
+    expect(anyMotion(defaultMotion())).toBe(false);
   });
 
-  test('motionFor keeps only what the style can play', () => {
-    const all = with_(m => { m.twinkle.on = m.columns.on = true; });
-    const on = (m: Motion) => [m.twinkle.on, m.columns.on];
-    expect(on(motionFor(all, { dots: true, letters: false }))).toEqual([true, false]);
-    expect(on(motionFor(all, { dots: false, letters: true }))).toEqual([false, true]);
-    // an older sidecar's removed effects (Colour over the day, Shimmer, Pan) are dropped
-    const old = cleanMotion({ day: { on: true }, shimmer: { on: true }, pan: { on: true }, windows: 'keep' });
-    expect(Object.keys(old).sort()).toEqual(['columns', 'seed', 'twinkle']);
+  test('an older sidecar keeps only Columns', () => {
+    // removed effects (Twinkle, Colour over the day, Shimmer, Pan) and Twinkle's seed are dropped
+    const old = cleanMotion({
+      twinkle: { on: true, amount: 0.1, rate: 6 }, seed: 7, day: { on: true }, shimmer: { on: true }, pan: { on: true },
+      windows: 'keep', columns: { on: true, from: 20 },
+    });
+    expect(Object.keys(old)).toEqual(['columns']);
+    expect(old.columns).toEqual({ ...defaultMotion().columns, on: true, from: 20 });
+    // an old Dots wallpaper with only Twinkle on is still
+    expect(anyMotion(cleanMotion({ twinkle: { on: true } }))).toBe(false);
   });
 });
 
@@ -169,12 +66,10 @@ describe('columns', () => {
     expect(columnFrameAt(3, 1, P, 0)).toBe(0);
   });
 
-  test('frame rate and style support', () => {
+  test('frame rate', () => {
     const m = with_(x => { x.columns.on = true; x.columns.frames = 121; x.columns.period = 20; });
     expect(motionFps(m)).toBe(12);
     expect(columnRate(1, 20)).toBe(0);
-    expect(motionFor(m, { dots: false, letters: true }).columns.on).toBe(true);
-    expect(motionFor(m, { dots: true, letters: false }).columns.on).toBe(false);
     expect(cleanMotion({ twinkle: { on: true } }).columns).toEqual(defaultMotion().columns);
   });
 

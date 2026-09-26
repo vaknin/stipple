@@ -2,13 +2,10 @@
 // defaults, and reading them back from a sidecar or session of any age. No runes here, so the
 // tests can import it; state.svelte.ts holds the live copies.
 
-import type { AsciiMethod, Mode } from '$typist/convert.js';
+import type { AsciiMethod } from '$typist/convert.js';
 import { cleanCrop } from '$typist/crop.js';
 import { CROP_DEFAULTS, TONE_DEFAULTS, type Crop, type Tone } from '$typist/tone.js';
 import { clampBox, COLS_MAX, COLS_MIN, innerRect, type Box } from './layout';
-
-/** The styles Stipple offers (Typist's Blocks is not one of them). */
-export type Style = Exclude<Mode, 'blocks'>;
 
 /**
  * The tone controls Stipple shows; the rest of Typist's tone stays at its defaults. Invert is not
@@ -16,8 +13,8 @@ export type Style = Exclude<Mode, 'blocks'>;
  */
 export type ToneControls = Pick<Tone, 'auto' | 'brightness' | 'contrast'>;
 
+/** Stipple draws only Typist's Letters, so the doc has no style (mode). */
 export interface Doc {
-  mode: Style;
   ascii: AsciiMethod;
   /** null = auto (from the output size). */
   cols: number | null;
@@ -47,7 +44,7 @@ const { auto, brightness, contrast } = TONE_DEFAULTS;
 export const TONE_CONTROL_DEFAULTS: Readonly<ToneControls> = Object.freeze({ auto, brightness, contrast });
 
 export const defaultDoc = (): Doc => ({
-  mode: 'ascii', ascii: 'shape', cols: null, tone: { ...TONE_CONTROL_DEFAULTS }, crop: { ...CROP_DEFAULTS },
+  ascii: 'shape', cols: null, tone: { ...TONE_CONTROL_DEFAULTS }, crop: { ...CROP_DEFAULTS },
 });
 
 export const defaultWall = (): Wall => ({
@@ -70,10 +67,12 @@ export function docFrom(raw: unknown): Doc {
     const v = t[k];
     if (typeof v === typeof tone[k] && (typeof v !== 'number' || Number.isFinite(v))) (tone as Raw)[k] = v;
   }
-  const cols = typeof r.cols === 'number' && Number.isFinite(r.cols) ? clamp(Math.round(r.cols), COLS_MIN, COLS_MAX) : null;
+  // a Dots or Blocks file (no longer offered) opens as Letters at the auto width: its column count
+  // was for another cell shape
+  const letters = r.mode === undefined || r.mode === 'ascii';
+  const cols = letters && typeof r.cols === 'number' && Number.isFinite(r.cols)
+    ? clamp(Math.round(r.cols), COLS_MIN, COLS_MAX) : null;
   return {
-    // Blocks (no longer offered) opens as the default style
-    mode: oneOf(r.mode, ['braille', 'ascii'] as const, d.mode),
     ascii: oneOf(r.ascii, ['shape', 'ramp'] as const, d.ascii),
     cols,
     tone,

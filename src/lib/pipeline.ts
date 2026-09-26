@@ -6,10 +6,10 @@ import { cleanTheme, lightInk } from '$palette';
 import type { ConvertOpts, Grid } from '$typist/convert.js';
 import { autoCrop, decodeImage, ImageError, imageErrorMessage, type Photo } from '$typist/imageio.js';
 import { TONE_DEFAULTS } from '$typist/tone.js';
-import { cellAspect, Engine, rowsFor, type ConvertRequest } from './engine/engine';
+import { CELL_ASPECT, Engine, rowsFor, type ConvertRequest } from './engine/engine';
 import { layoutArt, type Layout } from './layout';
 import {
-  cleanMotion, columnFrameAt, columnPlan, columnStart, frameGrid, motionFps, packField,
+  cleanMotion, columnFrameAt, columnPlan, columnStart, motionFps,
   type Motion,
 } from './motion';
 import { perf } from './perf.svelte';
@@ -69,10 +69,8 @@ export function requestFor(side: Side): ConvertRequest {
   const d = app.doc;
   const invert = lightInk(app.colours.ink, app.colours.paper) !== (side === 'night');
   const opts: ConvertOpts = {
-    mode: d.mode, cols: app.cols, rows: app.rows, dither: 'atkinson', ascii: d.ascii, blocks: 'quad', color: false,
+    mode: 'ascii', cols: app.cols, rows: app.rows, ascii: d.ascii,
     tone: { ...TONE_DEFAULTS, ...d.tone, invert },
-    // Dots carry their dot field: the animated preview and the saved field.png come from it
-    field: d.mode === 'braille',
   };
   return { crop: { ...app.crop }, opts };
 }
@@ -130,7 +128,7 @@ export async function currentGrid(side: Side = 'day') {
 
 /** Where `g` goes on a width x height canvas with the given (default: current) wall options. */
 export function layoutFor(g: Grid, width: number, height: number, wall: Pick<Wall, 'box'> = app.wall): Layout {
-  return layoutArt({ cols: g.cols, rows: g.rows, cellAspect: cellAspect(g.mode) }, { width, height, box: wall.box });
+  return layoutArt({ cols: g.cols, rows: g.rows, cellAspect: CELL_ASPECT }, { width, height, box: wall.box });
 }
 
 export function drawPreview() {
@@ -152,34 +150,25 @@ export function drawPreview() {
 }
 
 // -------------------------------------------------------------------------------------- motion
-// The preview plays the wallpaper's motion with motion.ts, the shader's JS mirror: each frame's
-// dots are encoded to a Braille grid and drawn by the same rasteriser as the still.
+// The preview plays the wallpaper's motion: each frame is one of the Columns keyframes, drawn by the
+// same rasteriser as the still, at the plugin's timing (motion.ts columnFrameAt).
 
-/** The motion as it will be saved: effects this style cannot play are off. */
-export const previewMotion = (): Motion => app.playMotion;
+/** The motion as it will be saved. */
+export const previewMotion = (): Motion => app.motion;
 
-let packedFor: Grid | null = null;
-let packed: Uint8Array | null = null;
-let scratch: Uint8Array | null = null;
 let motionTimer = 0;
 let epoch = performance.now();
 
 function previewGrid(g: Grid): Grid {
   const m = previewMotion();
-  if (m.columns.on) {
-    const k = app.playing ? playable() : null;
-    if (!k) return g;
-    const t = (performance.now() - epoch) / 1000;
-    return k.grids[columnFrameAt(t, k.cols.length, m.columns.period, k.start)]!;
-  }
-  const f = g.field;
-  if (!app.playing || !f || !m.twinkle.on) return g;
-  if (packedFor !== g) { packed = packField(f); packedFor = g; }
-  if (!scratch || scratch.length !== f.width * f.height) scratch = new Uint8Array(f.width * f.height);
-  return frameGrid(packed!, f.width, f.height, m, (performance.now() - epoch) / 1000, scratch);
+  if (!m.columns.on) return g;
+  const k = app.playing ? playable() : null;
+  if (!k) return g;
+  const t = (performance.now() - epoch) / 1000;
+  return k.grids[columnFrameAt(t, k.cols.length, m.columns.period, k.start)]!;
 }
 
-// Columns (Letters): the engine converts the photo at every keyframe's column count on a pool of
+// Columns: the engine converts the photo at every keyframe's column count on a pool of
 // workers (Engine.frames), after the preview is drawn. Converted counts are kept, so a new From,
 // To or Smoothness converts only the counts it adds, and One cycle (only the pace) converts
 // nothing. The preview plays the last complete set while a new one builds; Save waits for it.
@@ -208,12 +197,12 @@ const buildSide = (): Side => held ?? shownSide();
 /** Everything a keyframe depends on but its column count. */
 function cacheKey(side: Side): string {
   const { crop, opts } = requestFor(side);
-  return JSON.stringify([app.loaded?.path, crop, { ...opts, cols: 0, rows: 0, field: false }, app.cropAspect]);
+  return JSON.stringify([app.loaded?.path, crop, { ...opts, cols: 0, rows: 0 }, app.cropAspect]);
 }
 
 /** Everything the set of keyframes depends on (not the cycle: that is only the pace). */
 function framesKey(side: Side): string {
-  const m = app.playMotion.columns;
+  const m = app.motion.columns;
   return JSON.stringify([cacheKey(side), m.from, m.to, m.frames, app.cols]);
 }
 
@@ -226,14 +215,14 @@ function playable(): FrameBatch | null {
 
 /** The keyframes' column counts for the current settings (and whether the cell budget cut them). */
 export const currentPlan = () =>
-  columnPlan(app.playMotion.columns, app.cols, c => rowsFor(c, app.doc.mode, app.cropAspect));
+  columnPlan(app.motion.columns, app.cols, c => rowsFor(c, app.cropAspect));
 
 /** Start building the keyframes for the current settings, if Columns is on and they are not built. */
 function syncFrames() {
   const side = buildSide();
   const base = cacheKey(side);
   if (caches[side].key !== base) caches[side] = { key: base, grids: new Map() };
-  if (!app.loaded || !app.playMotion.columns.on) {
+  if (!app.loaded || !app.motion.columns.on) {
     if (frames) { frames = null; shown = null; engine.frames.cancel(); app.framesProgress = null; }
     return;
   }
@@ -262,7 +251,7 @@ function syncFrames() {
     return;
   }
   const { crop, opts } = requestFor(side);
-  const reqs = missing.map(c => ({ crop, opts: { ...opts, cols: c, rows: rowsFor(c, opts.mode, app.cropAspect), field: false } }));
+  const reqs = missing.map(c => ({ crop, opts: { ...opts, cols: c, rows: rowsFor(c, app.cropAspect) } }));
   let n = cols.length - missing.length;
   app.framesProgress = { done: n, total: cols.length };
   batch.done = engine.frames.run(reqs, (i, grid) => {
@@ -283,7 +272,7 @@ export async function columnFrames(side: Side = 'day'): Promise<{ cols: number[]
     for (;;) {
       syncFrames();
       const b = frames;
-      if (!b) throw new Error('Columns needs the Letters style');
+      if (!b) throw new Error('Columns is off');
       const grids = await b.done;
       if (grids && frames === b) return { cols: b.cols, start: b.start, grids };
     }
@@ -424,7 +413,7 @@ async function reopen(pngPath: string, spec: SidecarSpec, editable: boolean, seq
   if (seq !== loadSeq) return;
   await adopt(photo, spec.source.path, spec.source.name);
   applySpec(spec);
-  app.saved = editable ? { path: pngPath, key: app.imageKey(), motion: JSON.stringify(app.playMotion), theme: JSON.stringify(app.themeOpts) } : null;
+  app.saved = editable ? { path: pngPath, key: app.imageKey(), motion: JSON.stringify(app.motion), theme: JSON.stringify(app.themeOpts) } : null;
   app.say('info', editable
     ? `Reopened ${file}. A motion or theme change updates it when you save; other changes save a new file.`
     : `Reopened ${file}. Saving makes a new file in ~/Pictures/Wallpapers.`);

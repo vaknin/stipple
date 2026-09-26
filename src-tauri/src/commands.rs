@@ -47,14 +47,14 @@ pub async fn save_sidecar(png_path: String, json: String) -> Result<String, Stri
     Ok(path.display().to_string())
 }
 
-/// A texture of a saved wallpaper for the animated wallpaper (the Dots field, or the Letters
-/// Columns keyframes and glyphs): raw RGB body (3 bytes per texel), headers `x-png-path`
-/// (percent-encoded path of the wallpaper), `x-size` (`<W>x<H>`) and `x-name` (field, frames,
-/// glyphs or night; field when absent). Written as `<dir>/.stipple/<stem>/<name>.png`.
+/// A texture of a saved wallpaper for the animated wallpaper (the Columns keyframes and glyphs,
+/// or the night's coverage): raw RGB body (3 bytes per texel), headers `x-png-path`
+/// (percent-encoded path of the wallpaper), `x-size` (`<W>x<H>`) and `x-name` (frames, glyphs
+/// or night). Written as `<dir>/.stipple/<stem>/<name>.png`.
 #[tauri::command]
 pub async fn save_field(request: Request<'_>) -> Result<String, String> {
     let InvokeBody::Raw(bytes) = request.body() else {
-        return Err("expected the dot field as a raw body".into());
+        return Err("expected the texture as a raw body".into());
     };
     let header = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("");
     let png = PathBuf::from(files::percent_decode(header("x-png-path")));
@@ -64,7 +64,7 @@ pub async fn save_field(request: Request<'_>) -> Result<String, String> {
         .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)))
         .ok_or("x-size must be <width>x<height>")?;
     let name = match header("x-name") {
-        "" => "field",
+        "" => return Err("x-name is required".into()),
         n => n,
     };
     let path = files::save_field(&png, name, size, bytes)?;
@@ -79,7 +79,7 @@ pub struct Sidecar {
 }
 
 /// Remove the motion textures of a saved wallpaper that it no longer uses (`keep`: the ones it
-/// does, of field, frames, glyphs and night).
+/// does, of frames, glyphs and night; an older Dots wallpaper's field goes unless kept).
 #[tauri::command]
 pub async fn remove_motion_files(path: String, keep: Vec<String>) -> Result<(), String> {
     let png = files::wallpaper_png(&files::wallpaper_roots()?, &PathBuf::from(path))?;
@@ -114,7 +114,7 @@ pub async fn set_wallpaper(path: String) -> Result<omarchy::SetResult, String> {
 }
 
 /// Copy a saved wallpaper into `~/.config/omarchy/backgrounds/<theme>/` so it joins the rotation,
-/// with its sidecar and dot field (the animated wallpaper plays there too).
+/// with its sidecar and motion textures (the animated wallpaper plays there too).
 #[tauri::command]
 pub async fn add_to_theme_backgrounds(path: String) -> Result<String, String> {
     let file = files::inside(&files::wallpapers_dir()?, &PathBuf::from(path))?;

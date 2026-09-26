@@ -2,8 +2,9 @@
 import { describe, expect, test } from 'bun:test';
 import { autoColumns, boxPx, clampBox, COLS_MAX, COLS_MIN, innerRect, layoutArt, type Box, type Layout, type LayoutIn } from './layout';
 
-// Typist's File-target cell aspects (targets.js FIT.plain: cellEm / lineEm)
-const ASPECT = { braille: 0.75 / 1.3, ascii: 0.6 / 1.3 };
+// Cell aspects: Letters (Typist targets.js FIT.plain, cellEm / lineEm) and a wider cell, so the
+// layout is checked for more than one shape
+const ASPECT = { wide: 0.75 / 1.3, ascii: 0.6 / 1.3 };
 const rowsFor = (cols: number, aspect: number) => Math.max(1, Math.round(cols * aspect));
 const shape = (cols: number, aspect: number) => ({ cols, rows: rowsFor(cols, aspect), cellAspect: aspect });
 
@@ -12,7 +13,7 @@ const SIZES: [number, number][] = [
   [800, 1280], [7, 5], [1, 1],
 ];
 const BOXES: (Box | null)[] = [null, { x: 0.25, y: 0.25, w: 0.5, h: 0.5 }, { x: 0.1, y: 0.6, w: 0.26, h: 0.185 }];
-const GRIDS = [shape(125, ASPECT.braille), shape(156, ASPECT.ascii), shape(4, ASPECT.braille), shape(200, ASPECT.ascii),
+const GRIDS = [shape(125, ASPECT.wide), shape(156, ASPECT.ascii), shape(4, ASPECT.wide), shape(200, ASPECT.ascii),
   { cols: 37, rows: 91, cellAspect: 0.5 }];
 
 function each(fn: (l: Layout, o: LayoutIn, g: (typeof GRIDS)[number]) => void) {
@@ -76,7 +77,7 @@ describe('layout', () => {
   });
 
   test('the layout scales with the canvas (the preview is the export, smaller)', () => {
-    const g = shape(125, ASPECT.braille);
+    const g = shape(125, ASPECT.wide);
     const big = layoutArt(g, { width: 1920, height: 1080 });
     const small = layoutArt(g, { width: 960, height: 540 });
     expect(small.cellH * 2).toBeCloseTo(big.cellH, 1);
@@ -91,9 +92,9 @@ describe('auto columns', () => {
   const rowsAt = (cols: number, cell: number, a: number) => Math.max(1, Math.round((cols * cell) / a));
 
   test('1080p with the screen\'s aspect', () => {
-    expect(autoColumns(ASPECT.braille, o(1920, 1080), 16 / 9)).toBe(222);
-    expect(autoColumns(ASPECT.braille, o(1280, 720), 16 / 9)).toBe(148);
-    expect(autoColumns(ASPECT.braille, o(1080, 1920), 9 / 16)).toBe(125);
+    expect(autoColumns(ASPECT.wide, o(1920, 1080), 16 / 9)).toBe(222);
+    expect(autoColumns(ASPECT.wide, o(1280, 720), 16 / 9)).toBe(148);
+    expect(autoColumns(ASPECT.wide, o(1080, 1920), 9 / 16)).toBe(125);
   });
 
   test('the art fills its rectangle with cells about 15 px tall', () => {
@@ -116,11 +117,11 @@ describe('auto columns', () => {
 
   test('a box follows its own size', () => {
     const box = { x: 0, y: 0, w: 0.5, h: 300 / 1080 };
-    expect(autoColumns(ASPECT.braille, o(1920, 1080, box), 960 / 300)).toBe(autoColumns(ASPECT.braille, o(960, 300), 960 / 300));
+    expect(autoColumns(ASPECT.wide, o(1920, 1080, box), 960 / 300)).toBe(autoColumns(ASPECT.wide, o(960, 300), 960 / 300));
   });
 
   test('clamped to the column range', () => {
-    expect(autoColumns(ASPECT.braille, o(7, 5), 1.4)).toBe(COLS_MIN);
-    expect(autoColumns(ASPECT.braille, o(65536, 65536), 1)).toBe(COLS_MAX);
+    expect(autoColumns(ASPECT.wide, o(7, 5), 1.4)).toBe(COLS_MIN);
+    expect(autoColumns(ASPECT.wide, o(65536, 65536), 1)).toBe(COLS_MAX);
   });
 });

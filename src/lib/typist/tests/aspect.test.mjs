@@ -53,11 +53,11 @@ test('cropSize: square is cropSide, a rectangle is the largest of its aspect at 
 test('a converter run with aspect 1 is the one without', () => {
   const src = noise(640, 480);
   const crop = { x: 0.45, y: 0.55, zoom: 1.3, rotation: 17 };
-  for (const mode of ['braille', 'blocks', 'ascii']) {
+  for (const ascii of ['shape', 'ramp']) {
     const a = createConverter(); a.setSource(src);
     const b = createConverter(); b.setSource(src);
-    const opts = { mode, cols: 40, rows: 23 };
-    assert.deepEqual([...a.run(crop, opts).cp], [...b.run({ ...crop, aspect: 1 }, opts).cp], mode);
+    const opts = { mode: 'ascii', ascii, cols: 40, rows: 23 };
+    assert.deepEqual([...a.run(crop, opts).cp], [...b.run({ ...crop, aspect: 1 }, opts).cp], ascii);
   }
 });
 
@@ -80,9 +80,9 @@ test('a new aspect is a new sample (the cache key has it)', () => {
   const conv = createConverter();
   conv.setSource(noise(320, 200));
   const crop = { x: 0.5, y: 0.5, zoom: 1, rotation: 0 };
-  conv.run(crop, { mode: 'braille', cols: 20, rows: 10 });
+  conv.run(crop, { mode: 'ascii', cols: 20, rows: 10 });
   const n = conv.stats.samples;
-  conv.run({ ...crop, aspect: 1.6 }, { mode: 'braille', cols: 20, rows: 10 });
+  conv.run({ ...crop, aspect: 1.6 }, { mode: 'ascii', cols: 20, rows: 10 });
   assert.equal(conv.stats.samples, n + 1);
 });
 

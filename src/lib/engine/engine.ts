@@ -11,18 +11,15 @@ import { autoColumns, type LayoutIn } from '../layout';
 export type { Grid, Mode };
 export { gridLines };
 
-/**
- * Typist's File-target cell aspect (targets.js FIT.plain, cellEm / lineEm): braille 0.577,
- * ascii 0.462 (blocks, which Stipple does not offer, 0.5).
- */
-export const cellAspect = (mode: Mode): number => (mode === 'braille' ? 0.75 / 1.3 : mode === 'ascii' ? 0.6 / 1.3 : 0.6 / 1.2);
+/** Typist's File-target cell aspect for Letters (targets.js FIT.plain, cellEm / lineEm): 0.462. */
+export const CELL_ASPECT = 0.6 / 1.3;
 
-/** Rows that keep the crop's aspect (width / height): round(cols * cellAspect / aspect). */
-export const rowsFor = (cols: number, mode: Mode, aspect = 1): number =>
-  Math.max(1, Math.round((cols * cellAspect(mode)) / aspect));
+/** Rows that keep the crop's aspect (width / height): round(cols * CELL_ASPECT / aspect). */
+export const rowsFor = (cols: number, aspect = 1): number =>
+  Math.max(1, Math.round((cols * CELL_ASPECT) / aspect));
 
 /** Auto columns for the output and crop aspect (see layout.autoColumns). */
-export const autoCols = (mode: Mode, o: LayoutIn, aspect = 1): number => autoColumns(cellAspect(mode), o, aspect);
+export const autoCols = (o: LayoutIn, aspect = 1): number => autoColumns(CELL_ASPECT, o, aspect);
 
 export interface ConvertRequest { crop: Crop; opts: ConvertOpts }
 export interface ConvertResult { grid: Grid; ms: number }

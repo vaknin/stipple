@@ -48,36 +48,19 @@ declare module '$typist/convert.js' {
   import type { Crop, Tone, ToneStats } from '$typist/tone.js';
   export { LOOKS, TONE_DEFAULTS, CROP_DEFAULTS } from '$typist/tone.js';
 
-  export type Mode = 'braille' | 'ascii' | 'blocks';
-  export type Dither = 'atkinson' | 'floyd' | 'bayer' | 'threshold';
+  /** Stipple keeps only Typist's Letters. */
+  export type Mode = 'ascii';
   export type AsciiMethod = 'shape' | 'ramp';
-  export type BlocksKind = 'quad' | 'half';
-
-  export const DITHERS: readonly Dither[];
 
   export interface ConvertOpts {
     mode: Mode;
     cols: number;
     rows: number;
-    dither: Dither;
     ascii: AsciiMethod;
-    blocks: BlocksKind;
-    color: boolean;
     tone: Partial<Tone>;
-    /** Stipple: also return the dot field (Dots only). */
-    field?: boolean;
   }
 
-  /** One entry per dot (2 cols x 4 rows): lightness (1 = paper), dithered dots, edge-forced dots. */
-  export interface DotField {
-    width: number;
-    height: number;
-    L: Float32Array;
-    dots: Uint8Array;
-    forced: Uint8Array;
-  }
-
-  /** One cell per code point, row-major. fg / bg are 0xRRGGBB per cell (colour blocks only). */
+  /** One cell per code point, row-major. fg / bg are always null (upstream's colour blocks). */
   export interface Grid {
     mode: Mode;
     cols: number;
@@ -87,8 +70,6 @@ declare module '$typist/convert.js' {
     bg: Uint32Array | null;
     ink: number;
     tone?: ToneStats;
-    /** With opts.field, Dots only. */
-    field?: DotField | null;
   }
 
   /** Raw RGBA pixels, as ImageData has them. */
@@ -187,27 +168,4 @@ declare module '$typist/history.js' {
     undo(): T | null;
     redo(): T | null;
   }
-}
-
-
-declare module '$typist/dither.js' {
-  import type { Dither } from '$typist/convert.js';
-  /** Dither a W x H lightness grid (1 = paper) into dots (1 = raised). */
-  export function ditherDots(L: ArrayLike<number>, W: number, H: number, method?: Dither,
-    opts?: { edge?: unknown; edges?: number; cleanup?: boolean }): Uint8Array;
-  /** Pack a (2*cols) x (4*rows) dot grid into Braille code points (U+2800 + bits). */
-  export function encodeBraille(dots: ArrayLike<number>, W: number, H: number): {
-    cols: number;
-    rows: number;
-    cp: Uint32Array;
-    ink: number;
-  };
-}
-
-
-declare module '$typist/raster.js' {
-  export function brailleGeometry(cellW: number, cellH: number, dotR?: number): {
-    r: number;
-    centers: [number, number][];
-  };
 }

@@ -1,6 +1,6 @@
 # Stipple
 
-Turn a photo into a text-art wallpaper (Braille dots or letters) and set it as the
+Turn a photo into a text-art wallpaper (ASCII letters) and set it as the
 Omarchy background in one click. The art is made by the [Typist](https://github.com/winchxyz/typist)
 engine (vendored in `src/lib/typist`, MIT), laid out at exactly your monitor's resolution.
 
@@ -13,7 +13,7 @@ fills it exactly.
 
 1. **Open a photo** (PNG, JPEG, WebP or Canon CR3 raw): the Open button, `O`, or drag and drop it onto the window.
 2. Adjust it. The preview follows every control while you drag.
-   - **Style**: Dots (Atkinson dithering) or Letters (Shape-aware or Density).
+   - **Letters**: Shape-aware (letters chosen by their shape) or Density (by ink only).
    - **Columns**: type a number (4–4096), or **Auto**. Rows follow from the crop.
    - **Tone**: Auto levels, Brightness, Contrast. Double-click a slider to reset it; click
      its value to type one.
@@ -25,7 +25,7 @@ fills it exactly.
      risograph inks on dark paper. The colours decide which way the art goes: light ink on darker
      paper stands for the photo's light parts, dark ink for its dark parts, so it is never a
      negative. With several monitors, which one the wallpaper is made for.
-   - **Motion**: Twinkle, Columns (see
+   - **Motion**: Columns (see
      [Animated wallpapers](#animated-wallpapers)). The preview plays it; the pause button shows
      the still.
    - **Theme**: how the desktop's colours follow this wallpaper and the sun under the Stipple
@@ -63,17 +63,17 @@ make a new version from it (any other change saves a new file).
 ## Output format: PNG plus a JSON sidecar
 
 - **PNG** is what Omarchy can set today and what `omarchy theme bg next` rotates through
-  (jpg, jpeg, png, gif, bmp, webp). It is lossless, so the dots stay crisp.
+  (jpg, jpeg, png, gif, bmp, webp). It is lossless, so the letters stay crisp.
 - **`<name>.stipple.json`** keeps everything a later version needs to redraw the art without the
   photo: the grid (mode, cols, rows, one code point per cell as `lines` and `cp`), every setting
   (style, tone, crop: `crop.aspect` is the width / height it was cropped at), the wallpaper options,
   the layout (cell size and position), the source path and the engine commit.
   A future animated renderer can re-render, re-characterise or animate from this file alone.
-- **`.stipple/<name>/field.png`** (Dots only) is the dot field the animated wallpaper reads: one
-  pixel per dot, the saved dot in the red channel (the night's in green, see below). It sits in a hidden
-  folder so `omarchy theme bg next` never shows it. The sidecar (format `stipple/3`) also holds the
-  motion, and the Theme settings (`theme`; a sidecar without them gets the defaults, Sky at 70%).
-- **`.stipple/<name>/frames.png`** and **`glyphs.png`** (Letters with Columns motion) are the
+- The sidecar (format `stipple/3`) also holds the motion, and the Theme settings (`theme`; a
+  sidecar without them gets the defaults, Sky at 70%). A file saved while Stipple still had the
+  Dots and Blocks styles opens as Letters at the auto width, and an older Dots wallpaper shows as
+  its still PNG (re-inked under the Stipple theme); saving it again removes its `field.png`.
+- **`.stipple/<name>/frames.png`** and **`glyphs.png`** (Columns motion) are the
   keyframes: the engine converts the photo at **Smoothness** column counts spaced geometrically
   from From to To (fewer if all the cells would not fit a 4096 × 6000 texture), plus the saved
   count so the sweep starts on the PNG. The conversions run in parallel on up to 6 workers, and
@@ -96,12 +96,12 @@ make a new version from it (any other change saves a new file).
 - The art's area is the whole canvas (**Fill**) or the Custom rectangle. The photo is cropped to
   that area's shape, so the art covers it exactly (centred, integer-pixel offsets, clipped to it:
   only the rounding of the rows is cut). Around a Custom rectangle is the surround colour.
-- Cells keep Typist's File-target aspect (Dots 0.75/1.3, Letters 0.6/1.3), so the art matches the
+- Cells keep Typist's File-target aspect for Letters (0.6/1.3), so the art matches the
   Typist web app's proportions.
 - **Auto columns** are derived from the output instead of Typist's fixed 48/72/56 (too coarse for a
   1080p screen): the column count whose cells come out about **15 px tall** on the wallpaper.
   Rows = art height / 15, columns = rows × crop aspect / cell aspect, clamped to 4–4096 (the saved
-  dot field's 8192 px side). At 1920×1080 that is 222 columns for Dots.
+  width of `frames.png`). At 1920×1080 that is 277 columns.
 - A change of the area's shape moves an upright crop just enough to keep it on the photo.
 - The art is always laid out at the final size, never scaled afterwards. Paper fills everything
   behind and around it, so there is no seam.
@@ -113,25 +113,23 @@ Brightness one step per frame:
 
 | Style | Grid | Conversion p50 / p95 | Preview draw p50 | Preview updates |
 | --- | --- | --- | --- | --- |
-| Dots | 150×87 | 20 / 42 ms | 9 ms | ~42 / s |
-| Dots | 125×72 (1080p Auto) | 15 / 23 ms | 8 ms | ~37 / s |
 | Letters | 150×69 | 61 / 379 ms | 5 ms | ~13 / s |
 
-The window itself stays at ~57 fps in every style: conversion runs in a Web Worker
+The window itself stays at ~57 fps: conversion runs in a Web Worker
 (`src/lib/engine/convert.worker.ts`), one job at a time, newest request first, and each finished
-result is shown even if a newer one is on its way. Opening a photo shows the first Dots preview in
-about 0.7 s.
+result is shown even if a newer one is on its way.
 
 What it took, measured, not guessed:
 
 - **Drawing**: every canvas call is slow in WebKitGTK (about 7.5 µs per `fillText`, 150 µs per
-  `drawImage`, and one path of 50,000 dots took 20 s to fill). The grid is rasterised in plain JS
+  `drawImage`). The grid is rasterised in plain JS
   instead (`src/lib/rasterize.ts`, Typist's exact geometry) and put on the canvas once.
 - **Tone**: Typist's looks recomputed their heavy filters on every slider step. They are now
-  memoised per sample (`tone.js`, bit-identical output): a 150-column Dots drag went from 63 to
+  memoised per sample (`tone.js`, bit-identical output): a 150-column Braille drag (a style Stipple
+  has since dropped) went from 63 to
   20 ms per conversion.
 - **Letters**: the glyph matcher's resample is folded into its circle weights (`ascii.js`).
-- Letters is the slowest style. If it needs to be smoother, the Letters matcher and tone pipeline
+- If Letters needs to be smoother, its matcher and tone pipeline
   are the parts worth porting to Rust or WebAssembly.
 
 ## Build and run
@@ -158,7 +156,7 @@ install -Dm644 assets/stipple.desktop ~/.local/share/applications/stipple.deskto
 
 **Dev bridge**: in `bun tauri dev` only, `dev/tw.sh 'return TW.app.doc'` runs a snippet in the app
 window and prints the answer (`src/lib/dev/hooks.ts` lists what `TW` offers, including a drag
-benchmark, `TW.bench('ascii', 150)`). WebKit pauses animation frames while the window is on a hidden
+benchmark, `TW.bench(150)`). WebKit pauses animation frames while the window is on a hidden
 workspace, so timings need it visible; `TW.timerFrames()` runs frames on a timer so scripts can
 render a parked window anyway.
 
@@ -170,7 +168,7 @@ render a parked window anyway.
 - **Rust commands** (`src-tauri/src/commands.rs`), and nothing broader: `monitors`, `read_file`
   (PNG/JPEG/WebP ≤ 64 MB; the dialog and drag-and-drop give paths, not bytes), `save_png` (raw
   body, checks the PNG is exactly W×H), `save_sidecar` (replaced atomically), `save_field` (raw RGB
-  body, encoded as `field.png`, `frames.png` or `glyphs.png`), `remove_motion_files` (the ones a
+  body, encoded as `frames.png`, `glyphs.png` or `night.png`), `remove_motion_files` (the ones a
   saved wallpaper no longer uses), `read_sidecar` (reopening), `save_session` / `read_session`
   (the last photo and settings, see above), `set_wallpaper` (only files in
   `~/Pictures/Wallpapers` or the theme backgrounds), `add_to_theme_backgrounds`, `theme_colors`,
@@ -194,18 +192,17 @@ shows only when the current background is a Stipple PNG whose sidecar turns moti
 anything else (`bg next`, a theme change, a plain picture, the plugin off) it hides and the PNG
 underneath is the right still picture. A saved motion change reloads live.
 
-| Effect | Needs | What moves |
-| --- | --- | --- |
-| Twinkle | Dots | a few dots blink, picked at random each tick |
-| Columns | Letters | the column count sweeps From → To → From (any counts in 4–4096) |
+| Effect | What moves |
+| --- | --- |
+| Columns | the column count sweeps From → To → From (any counts in 4–4096) |
 
 Frame 0 of every effect is the saved PNG. Motion stops behind a fullscreen window, after 60 s
 idle (screensaver, lock, screen off) and on `omarchy-shell stipple pause`; with windows open it
 slows to 2 fps, and stops once windows and the bar cover 90% of the screen (only the gaps show).
 
 One fragment shader draws each frame (`shaders/wall.frag`), and only when the picture changes:
-on each Twinkle tick or Columns keyframe. `src/lib/motion.ts` is its JS mirror for the app's
-preview, and the tests check the two agree.
+on each Columns keyframe. `src/lib/motion.ts` mirrors its timing (`columnFrameAt`) for the app's
+preview.
 
 Install or update the plugin (compiles the shader, links the folder into
 `~/.config/omarchy/plugins`, enables it):
@@ -244,7 +241,7 @@ a little toward the ink. What the hour does is the wallpaper's Theme setting:
 When the hour takes ink and paper across each other (Custom's night on the other side of the
 day's colours), the art is also drawn the other way round, so the night is a positive picture too.
 Save then writes the night's art beside the day's: `.stipple/<name>/night.png` (its coverage),
-the green channel of `field.png` (its dots) and of `frames.png` (its keyframes, one glyph table
+the green channel of `frames.png` (its keyframes, one glyph table
 for both). The plugin switches over in a narrow band where ink and paper have the same lightness,
 where there is no contrast to see it by. Sky, Light and Warm never cross, so they save no night.
 

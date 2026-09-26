@@ -61,7 +61,6 @@
   // the preview's motion frames follow the motion settings and the play button
   $effect(() => {
     JSON.stringify(app.motion);
-    JSON.stringify(app.support);
     void app.playing;
     void app.loaded;
     untrack(() => syncMotion(true));
@@ -207,7 +206,6 @@
     <footer class="status num">
       {#if app.grid}
         <span>{app.grid.cols}×{app.grid.rows}</span>
-        <span>{app.grid.mode === 'braille' ? 'Dots' : 'Letters'}</span>
       {/if}
       <span>{app.wall.width}×{app.wall.height}{app.wall.box ? `, art in ${boxLabel(app.wall)}` : ''}</span>
       {#if app.grid}<span class="dim">{app.runMs.toFixed(1)} ms</span>{/if}

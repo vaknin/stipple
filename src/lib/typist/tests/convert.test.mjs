@@ -1,9 +1,8 @@
 // Converter tests (node, plain assert): node tests/convert.test.mjs
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
-import { createConverter, gridLines, DITHERS, smallGridBoost } from '../js/convert.js';
-import { encodeBraille, brailleDots, ditherDots } from '../js/dither.js';
-import { QUAD_CP, BLOCK_SET, blocksQuad, labGrid } from '../js/blocks.js';
+// Stipple patch: Letters only; upstream's Braille, dither and blocks tests went with those modes.
+import { createConverter } from '../js/convert.js';
 import { sampleFromRGBA, decodeSource, toneGrid, TONE_DEFAULTS, LOOKS } from '../js/tone.js';
 // Timing budgets are for this machine; shared CI runners (CI=true) are slower, so they get slack
 // there: the tests still catch a real slowdown without failing on a busy runner.
@@ -46,82 +45,40 @@ function halves(w = 400, h = 400) {   // left half black, right half white
 const CROP = { x: 0.5, y: 0.45, zoom: 1.2, rotation: 0 };
 const PHOTO = portrait();
 
-test('Braille bit order: each of the 8 dots maps to its code point', () => {
-  // [column, row] -> expected code point, from the Unicode dot numbering (dots 1-8)
-  const expect = [
-    [0, 0, 0x2801], [0, 1, 0x2802], [0, 2, 0x2804], [1, 0, 0x2808],
-    [1, 1, 0x2810], [1, 2, 0x2820], [0, 3, 0x2840], [1, 3, 0x2880],
-  ];
-  for (const [cx, cy, cp] of expect) {
-    const dots = new Uint8Array(8);
-    dots[cy * 2 + cx] = 1;
-    const g = encodeBraille(dots, 2, 4);
-    assert.equal(g.cp.length, 1);
-    assert.equal(g.cp[0], cp, `dot at col ${cx} row ${cy}: got U+${g.cp[0].toString(16)}`);
+/** Letters (non-blank cells) in the left or right half of a grid. */
+function inkCells(g, left) {
+  let n = 0;
+  for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
+    if ((c < g.cols / 2) !== left) continue;
+    if (g.cp[r * g.cols + c] !== 0x20) n++;
   }
-  assert.equal(encodeBraille(new Uint8Array(8).fill(1), 2, 4).cp[0], 0x28FF);
-  assert.equal(encodeBraille(new Uint8Array(8), 2, 4).cp[0], 0x2800);
-});
-
-test('Braille encode/decode round trip for all 256 patterns, multi-cell layout', () => {
-  const W = 2 * 256, H = 4;
-  const dots = new Uint8Array(W * H);
-  for (let c = 0; c < 256; c++) {
-    const d = brailleDots(0x2800 + c);
-    for (let r = 0; r < 4; r++) for (let k = 0; k < 2; k++) dots[r * W + c * 2 + k] = d[r][k];
-  }
-  const g = encodeBraille(dots, W, H);
-  for (let c = 0; c < 256; c++) assert.equal(g.cp[c], 0x2800 + c);
-  // second row of cells lands in the second row of the grid
-  const d2 = new Uint8Array(4 * 8); d2[4 * 2 + 1] = 1;   // dot at x=1, y=4 -> cell (0,1), dot 4
-  const g2 = encodeBraille(d2, 2, 8);
-  assert.deepEqual([...g2.cp], [0x2800, 0x2808]);
-});
-
-test('every dither gives only U+2800..U+28FF, never U+0020, right size', () => {
-  const conv = createConverter();
-  conv.setSource(PHOTO);
-  for (const d of DITHERS) {
-    for (const cols of [16, 28, 40, 60]) {
-      const rows = Math.round(cols * 0.55);
-      const g = conv.run(CROP, { mode: 'braille', cols, rows, dither: d });
-      assert.equal(g.cp.length, cols * rows);
-      assert.equal(g.cols, cols); assert.equal(g.rows, rows);
-      for (const cp of g.cp) assert.ok(cp >= 0x2800 && cp <= 0x28FF, `${d}: U+${cp.toString(16)}`);
-      const lines = gridLines(g);
-      assert.equal(lines.length, rows);
-      for (const l of lines) { assert.ok(!l.includes(' ')); assert.equal([...l].length, cols); }
-      assert.ok(g.ink > 0.1 && g.ink < 0.7, `${d} ${cols}: ink ${g.ink}`);
-    }
-  }
-});
+  return n;
+}
 
 test('deterministic: two fresh converters give identical grids', () => {
-  for (const d of DITHERS) {
+  for (const ascii of ['shape', 'ramp']) {
     const a = createConverter(); a.setSource(PHOTO);
     const b = createConverter(); b.setSource(PHOTO);
-    const opts = { mode: 'braille', cols: 40, rows: 22, dither: d, tone: { edges: 0.5 } };
+    const opts = { mode: 'ascii', ascii, cols: 40, rows: 22, tone: { edges: 0.5 } };
     assert.deepEqual([...a.run(CROP, opts).cp], [...b.run(CROP, opts).cp]);
   }
 });
 
-test('invert puts the dots on the light half', () => {
+test('only Letters: another mode is an error', () => {
+  const conv = createConverter();
+  conv.setSource(PHOTO);
+  assert.equal(conv.run(CROP, {}).mode, 'ascii');
+  assert.throws(() => conv.run(CROP, { mode: 'braille' }), /unknown mode/);
+});
+
+test('invert puts the letters on the light half', () => {
   const conv = createConverter();
   conv.setSource(halves());
-  const count = (g, left) => {
-    let n = 0;
-    for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
-      if ((c < g.cols / 2) !== left) continue;
-      const bits = g.cp[r * g.cols + c] - 0x2800;
-      for (let b = bits; b; b &= b - 1) n++;
-    }
-    return n;
-  };
-  const opts = { mode: 'braille', cols: 20, rows: 11, tone: { auto: false, detail: 0 } };
+  const opts = { mode: 'ascii', cols: 20, rows: 11, tone: { auto: false, detail: 0 } };
   const g0 = conv.run({}, opts);
   const g1 = conv.run({}, { ...opts, tone: { auto: false, detail: 0, invert: true } });
-  assert.ok(count(g0, true) > 10 * count(g0, false), 'normal: dots on the dark (left) half');
-  assert.ok(count(g1, false) > 10 * count(g1, true), 'inverted: dots on the light (right) half');
+  assert.ok(inkCells(g0, true) > 5 * inkCells(g0, false), 'normal: letters on the dark (left) half');
+  assert.ok(inkCells(g1, false) > 5 * inkCells(g1, true), 'inverted: letters on the light (right) half');
 });
 
 test('transparent pixels stay paper when inverted (logo background, past the photo edge)', () => {
@@ -130,70 +87,34 @@ test('transparent pixels stay paper when inverted (logo background, past the pho
   for (let y = 30; y < 70; y++) for (let x = 30; x < 70; x++) data.set([255, 255, 255, 255], (y * w + x) * 4);
   const conv = createConverter();
   conv.setSource({ width: w, height: h, data });
-  const g = conv.run({}, { mode: 'braille', cols: 20, rows: 10, dither: 'threshold', tone: { invert: true, auto: false, detail: 0 } });
-  const dotted = i => g.cp[i] !== 0x2800;
-  assert.ok(!dotted(0) && !dotted(19) && !dotted(199), 'transparent corners stay blank');
-  assert.ok(dotted(5 * 20 + 10), 'the opaque white square becomes dots');
+  const g = conv.run({}, { mode: 'ascii', cols: 20, rows: 10, tone: { invert: true, auto: false, detail: 0 } });
+  const inked = i => g.cp[i] !== 0x20;
+  assert.ok(!inked(0) && !inked(19) && !inked(199), 'transparent corners stay blank');
+  assert.ok(inked(5 * 20 + 10), 'the opaque white square becomes letters');
   // not inverted, white on transparent is paper on paper: nothing at all
-  const plain = conv.run({ zoom: 0.5 }, { mode: 'braille', cols: 20, rows: 10 });
-  assert.ok(plain.cp.every(c => c === 0x2800));
+  const plain = conv.run({ zoom: 0.5 }, { mode: 'ascii', cols: 20, rows: 10 });
+  assert.ok(plain.cp.every(c => c === 0x20));
 });
 
-test('blocks give only the allowed set; colour has fg/bg, mono has none', () => {
+test('memoisation: a tone change never resamples, a matcher change never re-tones', () => {
   const conv = createConverter();
   conv.setSource(PHOTO);
-  for (const blocks of ['quad', 'half']) {
-    for (const color of [true, false]) {
-      const g = conv.run(CROP, { mode: 'blocks', cols: 40, rows: 20, blocks, color });
-      assert.equal(g.cp.length, 800);
-      for (const cp of g.cp) assert.ok(BLOCK_SET.has(cp), `U+${cp.toString(16)}`);
-      if (color) { assert.ok(g.fg && g.bg); assert.equal(g.fg.length, 800); }
-      else { assert.equal(g.fg, null); assert.equal(g.bg, null); }
-      if (blocks === 'half' && !color) for (const cp of g.cp) assert.ok([0x20, 0x2580, 0x2584, 0x2588].includes(cp));
-    }
-  }
-});
-
-test('quadrant fit: one dark corner gives the matching quadrant with fg dark', () => {
-  // 2x2 sub-cells per mask: dark where the mask bit is set
-  for (let m = 1; m < 15; m++) {
-    const rgb = new Uint8ClampedArray(4 * 3);
-    const SUB = [0, 1, 2, 3];   // UL, UR, LL, LR -> row-major index in a 2x2 grid
-    for (let k = 0; k < 4; k++) {
-      const v = (m >> k) & 1 ? 20 : 235;
-      rgb[SUB[k] * 3] = rgb[SUB[k] * 3 + 1] = rgb[SUB[k] * 3 + 2] = v;
-    }
-    const g = blocksQuad(labGrid(rgb, null, 4), 2, 2);
-    assert.equal(g.cp[0], QUAD_CP[m], `mask ${m}: got U+${g.cp[0].toString(16)}`);
-    assert.ok((g.fg[0] & 0xff) < 60 && (g.bg[0] & 0xff) > 200);
-  }
-});
-
-test('memoisation: a tone change never resamples, a dither change never re-tones', () => {
-  const conv = createConverter();
-  conv.setSource(PHOTO);
-  const o = { mode: 'braille', cols: 40, rows: 22 };
+  const o = { mode: 'ascii', cols: 40, rows: 22 };
   conv.run(CROP, o);
   assert.deepEqual({ ...conv.stats }, { samples: 1, tones: 1, encodes: 1 });
   conv.run(CROP, { ...o, tone: { contrast: 0.3 } });
   assert.equal(conv.stats.samples, 1, 'tone change resampled');
   assert.equal(conv.stats.tones, 2);
-  conv.run(CROP, { ...o, tone: { contrast: 0.3 }, dither: 'bayer' });
-  assert.equal(conv.stats.tones, 2, 'dither change re-toned');
-  conv.run(CROP, { ...o, tone: { contrast: 0.3 }, dither: 'threshold' });
+  conv.run(CROP, { ...o, tone: { contrast: 0.3 }, ascii: 'ramp' });
+  assert.equal(conv.stats.tones, 2, 'matcher change re-toned');
   conv.run({ ...CROP }, o);   // back to the first tone: cached
   assert.equal(conv.stats.samples, 1);
   assert.equal(conv.stats.tones, 2);
   conv.run({ ...CROP, x: 0.51 }, o);
   assert.equal(conv.stats.samples, 2, 'crop change must resample');
-  // mono blocks: dither change does not re-tone either
-  conv.run(CROP, { mode: 'blocks', cols: 40, rows: 20, dither: 'atkinson' });
-  const t = conv.stats.tones;
-  conv.run(CROP, { mode: 'blocks', cols: 40, rows: 20, dither: 'bayer' });
-  assert.equal(conv.stats.tones, t);
   conv.setSource(PHOTO);
   conv.run(CROP, o);
-  assert.equal(conv.stats.samples, 4, 'setSource clears the caches');
+  assert.equal(conv.stats.samples, 3, 'setSource clears the caches');
 });
 
 test('sampler: transparent pixels are white paper, rotation turns the image', () => {
@@ -247,17 +168,8 @@ test('tone: auto hits the ink target, brightness works with auto, gamma > 1 ligh
     assert.ok(mean(g) > mean(base) + 0.01, id + ': gamma 2 lightens');
   }
   const inv = toneGrid(img, { ...TONE_DEFAULTS, look: 'soft', invert: true }, { target: 0.4 });
-  // a mostly light photo cannot reach 0.4 dots inverted without crushing it: the solve is bounded
+  // a mostly light photo cannot reach 0.4 ink inverted without crushing it: the solve is bounded
   assert.ok(inv.stats.coverage > 0.3 && inv.stats.coverage < 0.62, 'inverted coverage ' + inv.stats.coverage);
-  assert.equal(smallGridBoost(16), 1); assert.equal(smallGridBoost(40), 0);
-});
-
-test('edges OR a thinned ridge into the dots', () => {
-  const conv = createConverter();
-  conv.setSource(PHOTO);
-  const o = { mode: 'braille', cols: 40, rows: 22 };
-  const a = conv.run(CROP, o), b = conv.run(CROP, { ...o, tone: { edges: 1 } });
-  assert.ok(b.ink > a.ink, `edges add dots: ${a.ink.toFixed(3)} -> ${b.ink.toFixed(3)}`);
 });
 
 test('looks: TONE_DEFAULTS.look is photo; LOOKS lists 5 { id, name }; unknown look falls back', () => {
@@ -283,41 +195,33 @@ test('looks: every look deterministic, finite, in [0, 1], with .edge and .stats 
   }
 });
 
-test('looks: invert puts the dots on the light half in every look (auto on)', () => {
+test('looks: invert puts the letters on the light half in every look (auto on)', () => {
   const conv = createConverter();
   conv.setSource(halves());
-  const count = (g, left) => {
-    let n = 0;
-    for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
-      if ((c < g.cols / 2) !== left) continue;
-      for (let b = g.cp[r * g.cols + c] - 0x2800; b; b &= b - 1) n++;
-    }
-    return n;
-  };
   for (const { id } of LOOKS) {
-    const g0 = conv.run({}, { mode: 'braille', cols: 20, rows: 11, tone: { look: id } });
-    const g1 = conv.run({}, { mode: 'braille', cols: 20, rows: 11, tone: { look: id, invert: true } });
-    assert.ok(count(g0, true) > 5 * count(g0, false), id + ': normal: dots on the dark (left) half');
-    assert.ok(count(g1, false) > 5 * count(g1, true), id + ': inverted: dots on the light (right) half');
+    const g0 = conv.run({}, { mode: 'ascii', cols: 20, rows: 11, tone: { look: id } });
+    const g1 = conv.run({}, { mode: 'ascii', cols: 20, rows: 11, tone: { look: id, invert: true } });
+    assert.ok(inkCells(g0, true) > 5 * inkCells(g0, false), id + ': normal: letters on the dark (left) half');
+    assert.ok(inkCells(g1, false) > 5 * inkCells(g1, true), id + ': inverted: letters on the light (right) half');
   }
 });
 
 test('looks: brightness moves the ink in both themes, every look (+ = lighter photo)', () => {
   const conv = createConverter();
   conv.setSource(PHOTO);
-  const o = { mode: 'braille', cols: 40, rows: 22 };
+  const o = { mode: 'ascii', cols: 40, rows: 22 };
   for (const { id } of LOOKS) for (const invert of [false, true]) {
     const [dk, mid, lt] = [-0.6, 0, 0.6].map(b => conv.run(CROP, { ...o, tone: { look: id, invert, brightness: b } }).ink);
-    // light theme: lighter photo = fewer dots; dark theme: lighter photo = more lit dots
+    // light theme: lighter photo = less ink; dark theme: lighter photo = more lit letters
     const ok = invert ? lt >= mid && mid >= dk && lt - dk > 0.05 : lt <= mid && mid <= dk && dk - lt > 0.05;
     assert.ok(ok, id + (invert ? ' dark' : ' light') + ': ink at -0.6 / 0 / +0.6 = ' + [dk, mid, lt].map(v => v.toFixed(3)).join(' / '));
   }
 });
 
-test('looks: the tone cache is keyed on the look; colour blocks stay soft', () => {
+test('looks: the tone cache is keyed on the look', () => {
   const conv = createConverter();
   conv.setSource(PHOTO);
-  const o = { mode: 'braille', cols: 30, rows: 16 };
+  const o = { mode: 'ascii', cols: 30, rows: 16 };
   const a = conv.run(CROP, { ...o, tone: { look: 'photo' } });
   const n = conv.stats.tones;
   const b = conv.run(CROP, { ...o, tone: { look: 'poster' } });
@@ -327,9 +231,6 @@ test('looks: the tone cache is keyed on the look; colour blocks stay soft', () =
   const s = conv.stats.samples;
   conv.run(CROP, { ...o, tone: { look: 'sketch' } });
   assert.equal(conv.stats.samples, s, 'a look change never resamples');
-  const c1 = conv.run(CROP, { mode: 'blocks', cols: 30, rows: 16, color: true, tone: { look: 'photo' } });
-  const c2 = conv.run(CROP, { mode: 'blocks', cols: 30, rows: 16, color: true, tone: { look: 'soft' } });
-  assert.deepEqual([...c1.fg], [...c2.fg]);
 });
 
 const lookMs = {};
@@ -350,24 +251,23 @@ test('looks: every look under 5 ms for a 120 x 88 grid (node, median)', () => {
 });
 
 const timing = {};
-test('timing: 60 x 40 Braille from a fresh crop < 30 ms, tone change < 10 ms', () => {
+test('timing: 60 x 28 Letters from a fresh crop < 30 ms, tone change < 20 ms (the glyph match reruns)', () => {
   const conv = createConverter();
   conv.setSource(PHOTO);
-  const o = { mode: 'braille', cols: 60, rows: 40 };
+  const o = { mode: 'ascii', cols: 60, rows: 28 };
   conv.run({ ...CROP, x: 0.3 }, o);   // warm up the JIT
   conv.run({ ...CROP, x: 0.3 }, { ...o, tone: { contrast: 0.9 } });
-  const fresh = [], toneT = [], dith = [];
+  const fresh = [], toneT = [];
   for (let k = 0; k < 9; k++) {
     const crop = { ...CROP, x: 0.45 + k * 0.01 };
     let t0 = performance.now(); conv.run(crop, o); fresh.push(performance.now() - t0);
     t0 = performance.now(); conv.run(crop, { ...o, tone: { contrast: 0.1 * k + 0.05 } }); toneT.push(performance.now() - t0);
-    t0 = performance.now(); conv.run(crop, { ...o, tone: { contrast: 0.1 * k + 0.05 }, dither: 'floyd' }); dith.push(performance.now() - t0);
   }
   const med = a => a.slice().sort((x, y) => x - y)[a.length >> 1];
-  timing.fresh = med(fresh); timing.tone = med(toneT); timing.dither = med(dith);
+  timing.fresh = med(fresh); timing.tone = med(toneT);
   timing.freshMax = Math.max(...fresh); timing.toneMax = Math.max(...toneT);
   assert.ok(timing.fresh < 30 * PERF, 'fresh ' + timing.fresh);
-  assert.ok(timing.tone < 10 * PERF, 'tone ' + timing.tone);
+  assert.ok(timing.tone < 20 * PERF, 'tone ' + timing.tone);
 });
 
 test('ASCII wiring (when ascii.js is present)', () => {

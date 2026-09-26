@@ -1,27 +1,21 @@
 // A Grid drawn into a pixel buffer in plain JS, then put on a canvas with one putImageData.
 //
 // Why not Typist's raster.js drawGrid: every canvas call is slow in WebKitGTK (measured in this
-// webview: ~7.5 us per fillText, ~150 us per drawImage, ~5 us per arc, and one path of 50,000
-// arcs, a 1080p Braille wallpaper, took 20 s to fill). Plain JS writes the same frame in a few ms.
+// webview: ~7.5 us per fillText, ~150 us per drawImage). Plain JS writes the same frame in a few ms.
 //
-// Geometry is Typist's, so the art looks the same: Braille dot centres and radius from raster.js
-// brailleGeometry, letters with
-// raster.js's font fitting (advance = cell width, em box centred). What differs is only the
-// anti-aliasing: dots are supersampled stamps and glyphs are masks rendered once per cell size,
-// both placed at quarter-pixel positions.
+// Geometry is Typist's, so the art looks the same: raster.js's font fitting (advance = cell width,
+// em box centred). What differs is only the anti-aliasing: glyphs are masks rendered once per cell
+// size and placed at quarter-pixel positions.
 //
 // Mono art accumulates ink coverage (0..255, "over" compositing) and is coloured at the end
 // through a 256-entry table, so ink and paper are exact wherever coverage is 0 or 255.
 
 import type { Grid } from '$typist/convert.js';
-import { brailleGeometry } from '$typist/raster.js';
 import type { Layout } from './layout';
 import type { Colours } from './render';
 
-/** Sub-pixel positions per axis for dot stamps and glyph masks. */
+/** Sub-pixel positions per axis for glyph masks. */
 const PH = 4;
-/** Supersamples per axis when building a dot stamp. */
-const SS = 8;
 
 export class Surface {
   readonly width: number;
@@ -99,41 +93,6 @@ function tight(a: Uint8Array, w: number, h: number, ox: number, oy: number): Sta
   const out = new Uint8Array(tw * th);
   for (let y = 0; y < th; y++) out.set(a.subarray((y + y0) * w + x0, (y + y0) * w + x0 + tw), y * tw);
   return { ox: ox + x0, oy: oy + y0, w: tw, h: th, a: out };
-}
-
-const dotCache = new Map<number, Stamp[]>();
-
-/** A dot of radius r at the 16 quarter-pixel phases (index qy * PH + qx), supersampled. */
-function dotStamps(r: number): Stamp[] {
-  const key = Math.round(r * 1e4) / 1e4;
-  let stamps = dotCache.get(key);
-  if (stamps) return stamps;
-  const R = Math.ceil(r) + 1, n = 2 * R + 1, r2 = r * r;
-  stamps = [];
-  for (let qy = 0; qy < PH; qy++) {
-    for (let qx = 0; qx < PH; qx++) {
-      // the centre sits at (qx / PH, qy / PH) from the anchor pixel's top-left corner
-      const cx = R + qx / PH, cy = R + qy / PH;
-      const a = new Uint8Array(n * n);
-      for (let y = 0; y < n; y++) {
-        for (let x = 0; x < n; x++) {
-          let hit = 0;
-          for (let sy = 0; sy < SS; sy++) {
-            const dy = y + (sy + 0.5) / SS - cy;
-            for (let sx = 0; sx < SS; sx++) {
-              const dx = x + (sx + 0.5) / SS - cx;
-              if (dx * dx + dy * dy <= r2) hit++;
-            }
-          }
-          a[y * n + x] = Math.round((hit * 255) / (SS * SS));
-        }
-      }
-      stamps.push(tight(a, n, n, -R, -R));
-    }
-  }
-  if (dotCache.size > 16) dotCache.clear();
-  dotCache.set(key, stamps);
-  return stamps;
 }
 
 /** Split a position into its anchor pixel and quarter-pixel phase. */
@@ -232,7 +191,7 @@ function prepareGlyphs(set: GlyphSet, cp: Uint32Array, cellW: number) {
   const seen = new Set<number>();
   for (let i = 0; i < cp.length; i++) {
     const v = cp[i]!;
-    if (v === 0x20 || v === 0x2800 || seen.has(v) || set.masks.has(v)) continue;
+    if (v === 0x20 || seen.has(v) || set.masks.has(v)) continue;
     seen.add(v);
     need.push(v);
   }
@@ -272,8 +231,6 @@ function prepareGlyphs(set: GlyphSet, cp: Uint32Array, cellW: number) {
 export interface RasterOpts {
   /** CSS font family list for letters (Geist Mono first). */
   font: string;
-  /** Braille dot radius relative to the column pitch. */
-  dotR: number;
 }
 
 /**
@@ -305,43 +262,20 @@ export function rasterize(s: Surface, grid: Grid, layout: Layout, colours: Colou
   const { x, y, cellW, cellH } = layout;
 
   // the art's own box (plus overhang) inside the region: the only pixels that can get ink
-  let pad = 2;
-  if (grid.mode === 'braille') {
-    const { r, centers } = brailleGeometry(cellW, cellH, o.dotR);
-    const stamps = dotStamps(r);
-    for (let row = 0; row < rows; row++) {
-      const oy = y + row * cellH;
-      for (let col = 0; col < cols; col++) {
-        const v = cp[row * cols + col]!;
-        const bits = v >= 0x2800 && v <= 0x28ff ? v - 0x2800 : 0;
-        if (!bits) continue;
-        const ox = x + col * cellW;
-        for (let k = 0; k < 8; k++) {
-          if (!((bits >> k) & 1)) continue;
-          const ctr = centers[k]!;
-          const [ax, qx] = place(ox + ctr[0]);
-          const [ay, qy] = place(oy + ctr[1]);
-          blend(s, stamps[qy * PH + qx]!, ax, ay, rg);
-        }
-      }
+  const set = glyphSet(o.font, cellW, cellH);
+  prepareGlyphs(set, cp, cellW);
+  for (let row = 0; row < rows; row++) {
+    const [ay, qy] = place(y + row * cellH);
+    for (let col = 0; col < cols; col++) {
+      const v = cp[row * cols + col]!;
+      if (v === 0x20) continue;
+      const st = set.masks.get(v);
+      if (!st) continue;
+      const [ax, qx] = place(x + col * cellW);
+      blend(s, st[qy * PH + qx]!, ax, ay, rg);
     }
-    pad = Math.ceil(r) + 2;
-  } else {
-    const set = glyphSet(o.font, cellW, cellH);
-    prepareGlyphs(set, cp, cellW);
-    for (let row = 0; row < rows; row++) {
-      const [ay, qy] = place(y + row * cellH);
-      for (let col = 0; col < cols; col++) {
-        const v = cp[row * cols + col]!;
-        if (v === 0x20 || v === 0x2800) continue;
-        const st = set.masks.get(v);
-        if (!st) continue;
-        const [ax, qx] = place(x + col * cellW);
-        blend(s, st[qy * PH + qx]!, ax, ay, rg);
-      }
-    }
-    pad = Math.max(set.ovX, set.ovY) + 2;
   }
+  const pad = Math.max(set.ovX, set.ovY) + 2;
 
   // colour the covered pixels and clear the coverage for the next frame
   const lut = inkTable(colours.ink, colours.paper);

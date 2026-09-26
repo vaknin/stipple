@@ -8,19 +8,21 @@ License:   MIT, (c) 2026 winch. See LICENSE in this directory.
 
 What is here
 ------------
-js/        tone, convert, dither, blocks, ascii, shape-vectors, raster, imageio, crop, history
-           from upstream js/. Unchanged except the patches below. The app uses only the Photo
-           look, Atkinson dithering and the Dots / Letters modes; the other looks, dithers and
-           blocks.js stay because the converter and its tests are built around them.
-tests/     ascii, convert and fuzz .test.mjs, unchanged, plus aspect.test.mjs (Stipple's
-           own, for the crop aspect below). Run them with `bun run test:engine` (node --test; bun
-           test does not report these plain assert scripts correctly).
+js/        tone, convert, ascii, shape-vectors, imageio, crop, history from upstream js/.
+           Unchanged except the patches below. The app uses only the Photo look and the Letters
+           mode; the other looks stay because tone.js and its tests are built around them.
+tests/     ascii.test.mjs unchanged; convert and fuzz .test.mjs cut to Letters (their Braille,
+           dither, block and formatter tests went with those files); plus aspect.test.mjs
+           (Stipple's own, for the crop aspect below). Run them with `bun run test:engine`
+           (node --test; bun test does not report these plain assert scripts correctly).
 
 Local changes (each marked "Stipple patch" in the source)
 -------------------------------------------------------------
-js/raster.js   Trimmed to BRAILLE_SLOTS and brailleGeometry(): src/lib/rasterize.ts draws the
-               grid with the same geometry (canvas drawing calls are too slow in WebKitGTK), so
-               drawGrid, BLOCK_MASK and gridFromText went.
+js/convert.js  Letters only: the Braille dots (dither.js), blocks and colour blocks (blocks.js)
+               are cut, and with them the dithers, smallGridBoost and the per-encoder ink
+               targets. OPTS_DEFAULTS.mode is 'ascii'; another mode throws. Letters output is
+               bit-identical to before the cut (checked on 160 cases: every look, both themes,
+               both matchers, 4 sizes, square and turned rectangular crops).
 js/ui.js       Trimmed to paintRange() and announce(), copied verbatim from upstream ui.js
                (lines 6-10 and 222-228), because crop.js imports them. The rest of ui.js is DOM
                widgets this app implements in Svelte.
@@ -31,7 +33,7 @@ js/tone.js     Memoises, per sampled grid, the stages of each look that do not d
                guided filter, saliency, local min/max and border flood fill; texture's activity
                mask and CLAHE; sketch's XDoG Gaussians; the soft and poster blurs. Same operations
                in the same order: output is bit-identical to upstream (checked on 210 random
-               slider sequences across all looks). A 150-column Dots drag went from 63 to 20 ms.
+               slider sequences across all looks). A 150-column Braille drag went from 63 to 20 ms.
 Crop aspect (Crop to screen aspect). A crop may carry `aspect` = width / height; missing or 1 is
 upstream's square, and a square crop's output is bitwise upstream's (checked against a 7081dce
 clone: samples, toneGrid for every look, Braille and block grids, autoCrop, over random crops and
@@ -45,9 +47,6 @@ js/crop.js     The frame has the crop's aspect (frame() also returns its width `
                fitCropFor(crop, w, h) fits a turned rectangle (a square is unchanged).
 js/imageio.js  autoCrop(img, aspect): frames a cut-out's box and biases portraits for a rectangle
                (aspect 1 returns upstream's result).
-js/convert.js  Dot field (animated wallpapers): with opts.field, a Dots result also carries
-               `field` { width, height, L, dots, forced }: the toned lightness, the dithered dots
-               and the dots edge emphasis forced on, one entry per dot. Output is unchanged.
 js/ascii.js    resampleL builds its per-axis taps once as flat typed arrays (bit-identical).
                asciiCells folds that resample into the circle weights when the input has a whole
                number of samples per cell (the converter's 4 x 8), instead of building a 1.4 M
@@ -62,6 +61,7 @@ To take an upstream fix:
 
 Dropped (social targets, clipboard, video, UI, export): app.js, copy.js, links.js, share.js,
 preview.js, samples.js, store.js, encoder.js, export.js, targets.js, count.js, vendor/, the rest
-of ui.js and every other test. The app keeps its own copies of the three things it took from
-them: targets.js's File-target cell aspects and rowsFor (src/lib/engine/engine.ts) and
-export.js's MONO_STACK (src/lib/render.ts FONT).
+of ui.js and every other test. Dropped with the Dots style: dither.js, blocks.js, raster.js
+(Stipple's Braille geometry; src/lib/rasterize.ts draws only letters now). The app keeps its
+own copies of the three things it took from them: targets.js's File-target cell aspect for
+Letters and rowsFor (src/lib/engine/engine.ts) and export.js's MONO_STACK (src/lib/render.ts FONT).

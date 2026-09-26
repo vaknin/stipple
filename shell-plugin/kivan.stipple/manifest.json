@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "kivan.stipple",
   "name": "Stipple",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "kivan",
-  "description": "Animated Stipple wallpapers: Twinkle for Dots and Columns for Letters, drawn on the Bottom layer above the wallpaper PNG.",
+  "description": "Animated Stipple wallpapers: Columns for the letters, drawn on the Bottom layer above the wallpaper PNG, and the Stipple theme that follows the sun.",
   "kinds": [
     "service"
   ],

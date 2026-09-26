@@ -1,40 +1,24 @@
-// Animated wallpapers: the settings, the dot field the renderer reads, and a JS mirror of the
-// shell plugin's shader (shell-plugin/kivan.stipple/shaders/wall.frag) for the app's preview.
-// Keep hash, dotOn (frameDots) and columnFrameAt in step with wall.frag / Service.qml.
+// Animated wallpapers: the settings and the keyframe timing the shell plugin mirrors.
+// Keep columnFrameAt in step with Service.qml.
 //
-// Effects:
-//   Twinkle   a few cells, picked at random each tick, flip one dot (Dots)
-//   Columns   the column count sweeps From -> To -> From through real keyframes (Letters)
+// Effect:
+//   Columns   the column count sweeps From -> To -> From through real keyframes
 
-import type { DotField, Grid } from '$typist/convert.js';
-import { encodeBraille } from '$typist/dither.js';
 import { COLS_MAX, COLS_MIN } from './layout';
 
 export interface Motion {
-  twinkle: { on: boolean; amount: number; rate: number };
   /**
    * `frames` keyframes from `from` to `to` columns (fewer when they would not fit), there and back
    * once per `period` s. The period only sets the pace: changing it renders nothing.
    */
   columns: { on: boolean; from: number; to: number; frames: number; period: number };
-  seed: number;
 }
 
 export const defaultMotion = (): Motion => ({
-  twinkle: { on: false, amount: 0.04, rate: 8 },
   columns: { on: false, from: 10, to: 500, frames: 130, period: 20 },
-  seed: 1,
 });
 
-/** What each effect needs, for the Motion tab to explain a disabled switch. */
-export interface Support { dots: boolean; letters: boolean }
-
-/** Which effects a style can play: Twinkle needs Dots, Columns Letters. */
-export function supportFor(doc: { mode: string }): Support {
-  return { dots: doc.mode === 'braille', letters: doc.mode === 'ascii' };
-}
-
-/** Motion from a sidecar (any older or partial form) over the defaults. */
+/** Motion from a sidecar (any older or partial form; an old Twinkle is dropped) over the defaults. */
 export function cleanMotion(raw: unknown): Motion {
   const d = defaultMotion();
   if (!raw || typeof raw !== 'object') return d;
@@ -49,28 +33,14 @@ export function cleanMotion(raw: unknown): Motion {
     }
     return out as T;
   };
-  return {
-    twinkle: part(d.twinkle, r.twinkle),
-    columns: part(d.columns, r.columns),
-    seed: typeof r.seed === 'number' && Number.isFinite(r.seed) ? r.seed >>> 0 : d.seed,
-  };
+  return { columns: part(d.columns, r.columns) };
 }
 
-export const anyMotion = (m: Motion) => m.twinkle.on || m.columns.on;
+export const anyMotion = (m: Motion) => m.columns.on;
 
 /** Frames per second the effects need (the plugin's baseFps). 0 = still. */
 export function motionFps(m: Motion): number {
-  if (m.columns.on) return columnRate(m.columns.frames, m.columns.period);
-  return m.twinkle.on ? m.twinkle.rate : 0;
-}
-
-/** The motion as the sidecar stores it: only the effects this wallpaper can play stay on. */
-export function motionFor(m: Motion, s: Support): Motion {
-  return {
-    ...m,
-    twinkle: { ...m.twinkle, on: m.twinkle.on && s.dots },
-    columns: { ...m.columns, on: m.columns.on && s.letters },
-  };
+  return m.columns.on ? columnRate(m.columns.frames, m.columns.period) : 0;
 }
 
 // ------------------------------------------------------------------------------------ columns
@@ -143,58 +113,4 @@ export function columnFrameAt(t: number, n: number, period: number, start: numbe
   const u = ((((t / P + s0 / 2) % 1) + 1) % 1);
   const i = Math.round((n - 1) * (u < 0.5 ? 2 * u : 2 - 2 * u));
   return Math.min(n - 1, Math.max(0, i));
-}
-
-// ------------------------------------------------------------------------------ shader mirror
-
-/** wall.frag hash: three uints to [0, 1). */
-export function hash(x: number, y: number, z: number): number {
-  let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(z, -2048144777)) | 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  h ^= h >>> 16;
-  return (h >>> 8) / 16777216;
-}
-
-/**
- * The field texture the plugin reads (RGB, one texel per dot): R the saved dot, G the night's (the
- * dots drawn the other way round, for an hour whose colours have crossed over; 0 without), B unused.
- */
-export function packField(f: DotField, night?: DotField | null): Uint8Array {
-  const { width: W, height: H, dots } = f;
-  const out = new Uint8Array(W * H * 3);
-  for (let i = 0; i < W * H; i++) out[i * 3] = dots[i] ? 255 : 0;
-  if (night) {
-    if (night.width !== W || night.height !== H) throw new Error('the night dot field is not the day’s size');
-    for (let i = 0; i < W * H; i++) out[i * 3 + 1] = night.dots[i] ? 255 : 0;
-  }
-  return out;
-}
-
-/**
- * The dots of one frame at time t (seconds since the wallpaper appeared), as wall.frag dotOn:
- * `channel` 0 the day's, 1 the night's (packField).
- */
-export function frameDots(packed: Uint8Array, W: number, H: number, m: Motion, t: number, out: Uint8Array = new Uint8Array(W * H),
-  channel: 0 | 1 = 0): Uint8Array {
-  for (let i = 0; i < W * H; i++) out[i] = packed[i * 3 + channel]! > 127 ? 1 : 0;
-  if (m.twinkle.on && m.twinkle.amount > 0) {
-    const seed = (m.seed >>> 0) % 65536;
-    const tk = (Math.floor(t * m.twinkle.rate) * 4 + seed) >>> 0;
-    const cols = W >> 1, rows = H >> 2;
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (hash(c, r, tk + 1) >= m.twinkle.amount) continue;
-        const k = Math.min(7, Math.floor(hash(c, r, tk + 2) * 8));
-        const i = (r * 4 + (k >> 1)) * W + c * 2 + (k & 1);
-        out[i] = out[i] ? 0 : 1;
-      }
-    }
-  }
-  return out;
-}
-
-/** A Dots grid for one frame (for the preview's rasteriser). */
-export function frameGrid(packed: Uint8Array, W: number, H: number, m: Motion, t: number, scratch?: Uint8Array): Grid {
-  const g = encodeBraille(frameDots(packed, W, H, m, t, scratch), W, H);
-  return { mode: 'braille', cols: g.cols, rows: g.rows, cp: g.cp, fg: null, bg: null, ink: g.ink };
 }

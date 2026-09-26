@@ -45,7 +45,7 @@ export interface PackedFrames {
   rgb: Uint8Array;
 }
 
-const blank = (v: number) => v === 0x20 || v === 0x2800 || v === 0;
+const blank = (v: number) => v === 0x20 || v === 0;
 
 /**
  * Pack the keyframes' cells (grids with their layouts) into one texture, shelves at most `maxW`

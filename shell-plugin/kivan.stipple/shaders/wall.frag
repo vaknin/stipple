@@ -1,29 +1,23 @@
 // Stipple's animated wallpaper, one full-screen pass.
 //
-// Three ways to draw:
+// Two ways to draw:
 //   mode 0  recolour: the saved PNG, re-inked. Every mono PNG is paper + ink * coverage, so the
-//           coverage comes back from the pixel and is mixed with the colours of the hour. Any
-//           style; used for a still wallpaper under the Stipple theme.
-//   mode 1  dots: the Braille lattice drawn from the field texture (one texel per dot):
-//             R  the saved dot (255 = raised), exactly what the PNG shows
-//           Twinkle flips one dot in a few cells per tick.
+//           coverage comes back from the pixel and is mixed with the colours of the hour. Used
+//           for a still wallpaper under the Stipple theme (and an older Dots wallpaper).
 //   mode 2  letters (Columns): one keyframe of the letters, drawn from
 //             framesTex  the keyframes' cells, R = 1 + glyph index (0 blank), this one's at fgrid.zw
 //             glyphTex   each glyph at a few cell heights (levels), glyph g in channel g % 3 of
 //                        slot g / 3, a pixel of padding and OVER_X / OVER_Y of the cell around it
 //           Glyphs overhang their cell, so a pixel looks at its cell and the 8 around it. The two
 //           levels nearest the cell height are blended (lvMix). See src/lib/letterframes.ts.
+//   (mode 1 was the Braille dots, which Stipple no longer draws.)
 //
 // Outside the art's rectangle (the margin, or around an art box) is the surround colour.
 //
 // The night (effects.y, 0-1): when the hour's colours have crossed over, the art drawn the other
 // way round takes over, so the picture stays a positive. Each mode has it: mode 0 in nightTex (its
-// coverage), mode 1 in the field's G, mode 2 in framesTex's G. 0 draws only the day's, 1 only the
-// night's; between (a narrow band where ink and paper meet, palette.mjs flipAt) the two are mixed.
-//
-// The geometry is src/lib/rasterize.ts's: dot centres on a regular lattice snapped to quarter
-// pixels, radius min(dotR * pitchX, 0.46 * pitch). src/lib/motion.ts mirrors every formula here
-// for the app's preview; keep the two in step.
+// coverage), mode 2 in framesTex's G. 0 draws only the day's, 1 only the night's; between (a
+// narrow band where ink and paper meet, palette.mjs flipAt) the two are mixed.
 
 #version 440
 
@@ -37,13 +31,10 @@ layout(std140, binding = 0) uniform buf {
     vec4 paper;
     vec4 srcInk;     // colours the PNG was drawn with (mode 0)
     vec4 srcPaper;
-    vec4 canvas;     // wallpaper width, height, mode, seed
+    vec4 canvas;     // wallpaper width, height, mode, 0
     vec4 map;        // wallpaper px = uv * map.xy + map.zw
-    vec4 lattice;    // grid origin x, y, dot pitch x, y
     vec4 clipRect;   // x0, y0, x1, y1 in wallpaper px
-    vec4 field;      // field width, height, dot radius, 0
-    vec4 effects;    // twinkle amount, night (0 the day's art, 1 the night's), 0, 0
-    vec4 clock;      // 0, twinkle tick, 0, 0
+    vec4 effects;    // 0, night (0 the day's art, 1 the night's), 0, 0
     vec4 inner;      // the art's rectangle x0, y0, x1, y1 in wallpaper px (surround outside)
     vec4 surround;   // colour outside it
     vec4 fcell;      // mode 2: the keyframe's grid origin x, y and cell width, height (px)
@@ -54,36 +45,12 @@ layout(std140, binding = 0) uniform buf {
     vec4 lvMix;      // mode 2: weight of level B, 0, 0, 0
 };
 
-layout(binding = 1) uniform sampler2D fieldTex;
-layout(binding = 2) uniform sampler2D artTex;
-layout(binding = 3) uniform sampler2D framesTex;
-layout(binding = 4) uniform sampler2D glyphTex;
-layout(binding = 5) uniform sampler2D nightTex;
+layout(binding = 1) uniform sampler2D artTex;
+layout(binding = 2) uniform sampler2D framesTex;
+layout(binding = 3) uniform sampler2D glyphTex;
+layout(binding = 4) uniform sampler2D nightTex;
 
 const float OVER_X = 0.5, OVER_Y = 0.35;
-
-float hash(uint x, uint y, uint z) {
-    uint h = x * 374761393u + y * 668265263u + z * 2246822519u;
-    h = (h ^ (h >> 13)) * 1274126177u;
-    h ^= h >> 16;
-    return float(h >> 8) * (1.0 / 16777216.0);
-}
-
-// ch: 0 the day's dots (R), 1 the night's (G)
-bool dotOn(ivec2 s, int ch) {
-    if (s.x < 0 || s.y < 0 || s.x >= int(field.x) || s.y >= int(field.y)) return false;
-    uint seed = uint(canvas.w);
-    bool on = texelFetch(fieldTex, s, 0)[ch] > 0.5;
-    if (effects.x > 0.0) {
-        ivec2 c = s / ivec2(2, 4);
-        uint tk = uint(clock.y) * 4u + seed;
-        if (hash(uint(c.x), uint(c.y), tk + 1u) < effects.x) {
-            int k = min(7, int(hash(uint(c.x), uint(c.y), tk + 2u) * 8.0));
-            if (s == c * ivec2(2, 4) + ivec2(k & 1, k >> 1)) on = !on;
-        }
-    }
-    return on;
-}
 
 // Coverage of glyph g at u (cell units, the cell is 0..1) from one atlas level, bilinear inside
 // its tile only, so a neighbouring glyph never bleeds in.
@@ -124,28 +91,8 @@ float lettersCov(vec2 wp, int ch) {
     return cov;
 }
 
-float dotsCov(vec2 wp, float aa, int ch) {
-    float cov = 0.0;
-    float r = field.z;
-    vec2 f = (wp - lattice.xy) / lattice.zw - 0.5;
-    ivec2 s0 = ivec2(floor(f));
-    for (int dy = 0; dy < 2; dy++) {
-        for (int dx = 0; dx < 2; dx++) {
-            ivec2 s = s0 + ivec2(dx, dy);
-            vec2 c = floor((lattice.xy + (vec2(s) + 0.5) * lattice.zw) * 4.0 + 0.5) / 4.0;
-            float dist = length(wp - c);
-            if (dist > r + aa || !dotOn(s, ch)) continue;
-            float ci = clamp((r - dist) / aa + 0.5, 0.0, 1.0);
-            cov = 1.0 - (1.0 - cov) * (1.0 - ci);
-        }
-    }
-    return cov;
-}
-
 void main() {
     vec2 wp = qt_TexCoord0 * map.xy + map.zw;
-    // derivatives in uniform control flow: the branches below differ per pixel
-    float aa = max(fwidth(wp.x), 1e-4);
     float night = effects.y;
     vec3 col;
     if (wp.x < inner.x || wp.y < inner.y || wp.x >= inner.z || wp.y >= inner.w) {
@@ -162,9 +109,8 @@ void main() {
     } else {
         float cov = 0.0;
         if (wp.x >= clipRect.x && wp.y >= clipRect.y && wp.x < clipRect.z && wp.y < clipRect.w) {
-            bool letters = canvas.z > 1.5;
-            float day = night < 1.0 ? (letters ? lettersCov(wp, 0) : dotsCov(wp, aa, 0)) : 0.0;
-            float other = night > 0.0 ? (letters ? lettersCov(wp, 1) : dotsCov(wp, aa, 1)) : 0.0;
+            float day = night < 1.0 ? lettersCov(wp, 0) : 0.0;
+            float other = night > 0.0 ? lettersCov(wp, 1) : 0.0;
             cov = mix(day, other, night);
         }
         col = mix(paper.rgb, ink.rgb, cov);

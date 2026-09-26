@@ -1,7 +1,7 @@
 // Draws a wallpaper: paper over the whole canvas, then the grid at its layout (clipped to its area).
 // The export draws at the output size; the preview draws the same thing at its own pixel size.
 // Everything is laid out in device pixels. The grid itself is rasterised in JS (rasterize.ts):
-// canvas drawing calls are too slow in WebKitGTK for tens of thousands of dots or glyphs.
+// canvas drawing calls are too slow in WebKitGTK for tens of thousands of glyphs.
 
 import type { Grid } from '$typist/convert.js';
 import { cropSize, type Crop } from '$typist/tone.js';
@@ -11,8 +11,6 @@ import { rasterize, Surface } from './rasterize';
 /** Typist's PNG export font stack (export.js MONO_STACK: the bundled Geist Mono first). */
 export const FONT = '"Geist Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, '
   + '"DejaVu Sans Mono", "Liberation Mono", monospace';
-/** Braille dot radius relative to the column pitch, as Typist exports it. */
-export const DOT_R = 0.32;
 
 export interface Colours {
   ink: string;
@@ -25,7 +23,7 @@ type Ctx = CanvasRenderingContext2D;
 
 /** Draw the whole wallpaper onto a canvas of exactly the surface's size. */
 export function renderWallpaper(ctx: Ctx, grid: Grid, layout: Layout, colours: Colours, surface: Surface) {
-  ctx.putImageData(rasterize(surface, grid, layout, colours, { font: FONT, dotR: DOT_R }), 0, 0);
+  ctx.putImageData(rasterize(surface, grid, layout, colours, { font: FONT }), 0, 0);
 }
 
 /**
@@ -79,7 +77,7 @@ export async function renderPng(grid: Grid, layout: Layout, colours: Colours, wi
  * night's mask, which the plugin colours with the hour's ink and paper (wall.frag mode 0).
  */
 export function renderCoverage(grid: Grid, layout: Layout, width: number, height: number): Uint8Array {
-  const img = rasterize(new Surface(width, height), grid, layout, { ink: '#ffffff', paper: '#000000' }, { font: FONT, dotR: DOT_R });
+  const img = rasterize(new Surface(width, height), grid, layout, { ink: '#ffffff', paper: '#000000' }, { font: FONT });
   const d = img.data, out = new Uint8Array(width * height * 3);
   for (let i = 0, n = width * height; i < n; i++) out[i * 3] = out[i * 3 + 1] = out[i * 3 + 2] = d[i * 4]!;
   return out;

@@ -41,7 +41,7 @@ export interface Layout {
 }
 
 export const COLS_MIN = 4;
-/** The saved dot field is at most 8192 px a side (files.rs MAX_FIELD), 2 dots per column. */
+/** The keyframes texture (frames.png) is 4096 px wide, one texel per cell. */
 export const COLS_MAX = 4096;
 /** Auto columns aim for cells about this tall in output pixels. */
 export const AUTO_CELL_PX = 15;
@@ -87,7 +87,7 @@ export function layoutArt(g: GridShape, o: LayoutIn): Layout {
  * Auto columns: the column count whose cells come out about AUTO_CELL_PX tall at the output size.
  * `aspect` is the crop's (art width / height, 1 = square). The art's height is the larger of the
  * inner rectangle's height and its width / aspect (the art covers it);
- * rows = height / AUTO_CELL_PX, cols = rows * aspect / cellAspect. 1080 px square Braille gives 222.
+ * rows = height / AUTO_CELL_PX, cols = rows * aspect / cellAspect. 1080 px square Letters gives 156.
  */
 export function autoColumns(cellAspect: number, o: LayoutIn, aspect = 1): number {
   const inner = innerRect(o);

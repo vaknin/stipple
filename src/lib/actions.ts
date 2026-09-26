@@ -2,12 +2,12 @@
 //
 // Output: ~/Pictures/Wallpapers/<photo>-stipple-<W>x<H>.png (never overwritten; -2, -3… on
 // collision) plus <same name>.stipple.json, the grid and every setting, so a later renderer (an
-// animated one, an SVG export) can redraw or re-characterise the art without the photo. Dots also
-// get their dot field, .stipple/<same name>/field.png, which the shell plugin animates; Letters
-// with Columns motion get their keyframes and glyphs there (frames.png, glyphs.png).
+// animated one, an SVG export) can redraw or re-characterise the art without the photo. Columns
+// motion gets its keyframes and glyphs in .stipple/<same name>/ (frames.png, glyphs.png), which
+// the shell plugin animates.
 // When the Theme settings take the colours across each other at some hour (Custom's night, say),
 // the art is also drawn the other way round, so the night is a positive picture too: its coverage
-// (night.png), its dots (field.png's G) and its keyframes (frames.png's G). The plugin switches
+// (night.png) and its keyframes (frames.png's G). The plugin switches
 // over where ink and paper meet (palette.mjs flipAt).
 // Changing only the motion of a saved wallpaper rewrites its sidecar: the plugin picks it up live.
 // So does the Theme block (only it changed: just that block is rewritten), which the plugin turns
@@ -16,12 +16,12 @@
 import { needsNight } from '$palette';
 import { gridLines, type Grid } from '$typist/convert.js';
 import { version as APP_VERSION } from '../../package.json';
-import { cellAspect } from './engine/engine';
+import { CELL_ASPECT } from './engine/engine';
 import { atlasLevels, glyphAtlas, packFrames } from './letterframes';
 import { baseName, columnFrames, currentGrid, layoutFor, schedule } from './pipeline';
 import type { Layout } from './layout';
-import { motionFor, packField, supportFor, type Motion } from './motion';
-import { DOT_R, FONT, renderCoverage, renderPng, type Colours } from './render';
+import type { Motion } from './motion';
+import { FONT, renderCoverage, renderPng, type Colours } from './render';
 import { app, effectiveCrop, type Snapshot } from './state.svelte';
 import {
   addToThemeBackgrounds, errorText, readSidecar, removeMotionFiles, saveField, savePng, saveSidecar, setWallpaper, useStippleTheme,
@@ -33,7 +33,6 @@ export const FORMAT = 'stipple/3';
 
 /** `.stipple/<stem>/<name>.png`, relative to the wallpaper's folder. */
 const motionFile = (pngPath: string, name: string) => `.stipple/${baseName(pngPath).replace(/\.png$/i, '')}/${name}.png`;
-export const fieldFile = (pngPath: string) => motionFile(pngPath, 'field');
 
 /** The Columns keyframes of one side, showing how far along they are instead of a bare "Saving…". */
 async function framesOf(side: 'day' | 'night') {
@@ -56,12 +55,12 @@ async function framesOf(side: 'day' | 'night') {
  * letterframes.ts): every keyframe's layout and place in frames.png, the glyph atlas levels, and
  * whether frames.png's G holds the night's keyframes.
  */
-async function saveColumns(pngPath: string, wall: Snapshot['wall'], mode: Grid['mode'], night: boolean) {
+async function saveColumns(pngPath: string, wall: Snapshot['wall'], night: boolean) {
   const { grids, start } = await framesOf('day');
   const nightGrids = night ? (await framesOf('night')).grids : null;
   const layouts = grids.map(g => layoutFor(g, wall.width, wall.height, wall));
   const packed = packFrames(grids, layouts, undefined, nightGrids);
-  const atlas = glyphAtlas(packed.glyphs, cellAspect(mode), atlasLevels(layouts.map(l => l.cellH)), FONT);
+  const atlas = glyphAtlas(packed.glyphs, CELL_ASPECT, atlasLevels(layouts.map(l => l.cellH)), FONT);
   await saveField(pngPath, packed.rgb, packed.width, packed.height, 'frames');
   await saveField(pngPath, atlas.rgb, atlas.width, atlas.height, 'glyphs');
   return {
@@ -78,18 +77,19 @@ async function saveColumns(pngPath: string, wall: Snapshot['wall'], mode: Grid['
 type Columns = Awaited<ReturnType<typeof saveColumns>>;
 
 /**
- * The textures that go with the still picture: the dot field (with the night's dots in G) and the
- * night's coverage. Written before the sidecar: the plugin loads them when the sidecar appears.
+ * The texture that goes with the still picture: the night's coverage. Written before the sidecar:
+ * the plugin loads it when the sidecar appears.
  */
-async function saveTextures(pngPath: string, grid: Grid, night: Grid | null, layout: Layout, wall: Snapshot['wall']) {
-  if (grid.field) await saveField(pngPath, packField(grid.field, night?.field), grid.field.width, grid.field.height);
+async function saveTextures(pngPath: string, night: Grid | null, layout: Layout, wall: Snapshot['wall']) {
   if (night) await saveField(pngPath, renderCoverage(night, layout, wall.width, wall.height), wall.width, wall.height, 'night');
 }
 
-/** After the sidecar: remove the textures it no longer names (Columns turned off, say). */
-function dropUnused(pngPath: string, grid: Grid, columns: Columns | null, night: Grid | null) {
+/**
+ * After the sidecar: remove the textures it no longer names (Columns turned off, say, or an older
+ * Dots wallpaper's field.png).
+ */
+function dropUnused(pngPath: string, columns: Columns | null, night: Grid | null) {
   const keep: MotionFile[] = [];
-  if (grid.field) keep.push('field');
   if (columns) keep.push('frames', 'glyphs');
   if (night) keep.push('night');
   return removeMotionFiles(pngPath, keep);
@@ -117,40 +117,37 @@ function sidecar(grid: Grid, snap: Snapshot, motion: Motion, colours: Colours, p
     /** Wallpaper options; ink / paper null = the default colours, surround null = paper. */
     wallpaper: snap.wall,
     colours,
-    /** What the shell plugin plays: effects this style cannot play are off. */
+    /** What the shell plugin plays. */
     motion,
     /** The Motion tab as it was left (reopening restores it). */
     motionSettings: snap.motion,
     /** The Stipple theme (palette.mjs ThemeOpts): how the plugin shifts these colours with the sun. */
     theme: snap.theme,
-    /** The dot field (Dots only): one texel per dot, see motion.ts packField. */
-    field: grid.field ? { file: fieldFile(pngPath), width: grid.field.width, height: grid.field.height } : null,
-    /** Columns motion (Letters): the keyframes the plugin draws, see letterframes.ts. */
+    /** Columns motion: the keyframes the plugin draws, see letterframes.ts. */
     columns,
     /**
      * The art drawn the other way round, for the hours whose colours cross over (palette.mjs
-     * needsNight; null when none do): its coverage, whether field.png's G holds its dots, its cells.
+     * needsNight; null when none do): its coverage and its cells.
      */
     night: night ? {
       file: motionFile(pngPath, 'night'),
-      field: !!night.field,
       grid: { lines: gridLines(night), cp: Array.from(night.cp) },
     } : null,
     layout: {
       cellW: layout.cellW, cellH: layout.cellH, x: layout.x, y: layout.y, artW: layout.artW, artH: layout.artH,
-      inner: layout.inner, clip: layout.clip, cellAspect: cellAspect(grid.mode), font: FONT, dotR: DOT_R,
+      inner: layout.inner, clip: layout.clip, cellAspect: CELL_ASPECT, font: FONT,
     },
     grid: {
       mode: grid.mode,
       cols: grid.cols,
       rows: grid.rows,
-      /** Rows as text: one code point per cell (Braille blanks are U+2800, others U+0020). */
+      /** Rows as text: one code point per cell (blanks are U+0020). */
       lines: gridLines(grid),
       /** The same cells as code points, row-major. */
       cp: Array.from(grid.cp),
-      /** 0xRRGGBB per cell, colour blocks only. */
-      fg: grid.fg ? Array.from(grid.fg) : null,
-      bg: grid.bg ? Array.from(grid.bg) : null,
+      /** Always null: Typist's colour blocks, which Stipple does not draw. */
+      fg: null,
+      bg: null,
       ink: grid.ink,
     },
   };
@@ -185,7 +182,7 @@ export async function save(): Promise<string | null> {
   if (!app.loaded || app.busy) return null;
   const key = app.imageKey();
   const prev = app.saved && app.saved.key === key ? app.saved : null;
-  const motionKey = JSON.stringify(app.playMotion);
+  const motionKey = JSON.stringify(app.motion);
   const themeKey = JSON.stringify(app.themeOpts);
   if (prev && prev.motion === motionKey && prev.theme === themeKey) return prev.path;
   app.busy = 'Saving…';
@@ -193,7 +190,7 @@ export async function save(): Promise<string | null> {
     // everything is read before the first await: an edit during the save belongs to the next one
     const snap = app.snapshot();
     const colours = { ...app.colours };
-    const motion = motionFor(snap.motion, supportFor(snap.doc));
+    const motion = snap.motion;
     const name = app.loaded.name;
     if (prev && prev.motion === motionKey && await saveTheme(prev.path, snap.theme)) {
       app.say('ok', `Updated the theme of ${baseName(prev.path)}.`);
@@ -207,19 +204,19 @@ export async function save(): Promise<string | null> {
     let path: string;
     if (prev) {
       path = prev.path;
-      await saveTextures(path, grid, night, layout, snap.wall);
-      const columns = motion.columns.on ? await saveColumns(path, snap.wall, grid.mode, !!night) : null;
+      await saveTextures(path, night, layout, snap.wall);
+      const columns = motion.columns.on ? await saveColumns(path, snap.wall, !!night) : null;
       await saveSidecar(path, JSON.stringify(sidecar(grid, snap, motion, colours, path, layout, columns, night)));
-      await dropUnused(path, grid, columns, night);
+      await dropUnused(path, columns, night);
       const what = [prev.motion !== motionKey && 'motion', prev.theme !== themeKey && 'theme'].filter(Boolean).join(' and ');
       app.say('ok', `Updated the ${what || 'motion'} of ${baseName(path)}.`);
     } else {
       const png = await renderPng(grid, layout, colours, width, height);
       path = await savePng(new Uint8Array(await png.arrayBuffer()), name, width, height);
-      await saveTextures(path, grid, night, layout, snap.wall);
-      const columns = motion.columns.on ? await saveColumns(path, snap.wall, grid.mode, !!night) : null;
+      await saveTextures(path, night, layout, snap.wall);
+      const columns = motion.columns.on ? await saveColumns(path, snap.wall, !!night) : null;
       await saveSidecar(path, JSON.stringify(sidecar(grid, snap, motion, colours, path, layout, columns, night)));
-      await dropUnused(path, grid, columns, night);
+      await dropUnused(path, columns, night);
       app.say('ok', `Saved ${baseName(path)} in ~/Pictures/Wallpapers.`);
     }
     app.saved = { path, key, motion: motionKey, theme: themeKey };

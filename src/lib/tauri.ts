@@ -57,12 +57,10 @@ export const saveSidecar = (pngPath: string, json: string) =>
   invoke<string>('save_sidecar', { pngPath, json });
 
 /** The textures under `.stipple/<stem>/` (src-tauri files.rs MOTION_FILES). */
-export type MotionFile = 'field' | 'frames' | 'glyphs' | 'night';
+export type MotionFile = 'frames' | 'glyphs' | 'night';
 
-/** Writes `<dir>/.stipple/<stem>/field.png` from a packed RGB dot field (motion.packField). */
 /** One motion texture of a saved wallpaper: `.stipple/<stem>/<name>.png`. */
-export const saveField = (pngPath: string, rgb: Uint8Array, width: number, height: number,
-  name: MotionFile = 'field') =>
+export const saveField = (pngPath: string, rgb: Uint8Array, width: number, height: number, name: MotionFile) =>
   invoke<string>('save_field', rgb, {
     headers: { 'x-png-path': encodeURIComponent(pngPath), 'x-size': `${width}x${height}`, 'x-name': name },
   });

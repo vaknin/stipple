@@ -23,7 +23,7 @@
 //   - the wallpaper surface redraws with the shifted ink and paper, a still wallpaper included
 //     (shader mode 0 re-inks the PNG). When the hour takes ink and paper across each other (Custom's
 //     night), it switches to the art drawn the other way round, which the sidecar's `night` block
-//     brings (night.png, and the G of field.png and frames.png), so the night is a positive too;
+//     brings (night.png, and the G of frames.png), so the night is a positive too;
 //   - ~/.config/omarchy/themes/stipple/colors.toml is rewritten on a new wallpaper or settings, and
 //     when the palette has drifted far enough (at most every 30 min), and `apply-theme.sh apply`
 //     re-applies the theme so terminals, borders and apps follow. Each of those reloads in place.
@@ -75,19 +75,16 @@ Item {
   readonly property string stem: root.isPng ? root.current.replace(/^.*\//, "").replace(/\.png$/i, "") : ""
   readonly property string dir: root.current.replace(/\/[^/]*$/, "")
   readonly property string sidecarPath: root.isPng ? root.dir + "/" + root.stem + ".stipple.json" : ""
-  readonly property string fieldPath: root.isPng ? root.dir + "/.stipple/" + root.stem + "/field.png" : ""
   readonly property string framesPath: root.isPng ? root.dir + "/.stipple/" + root.stem + "/frames.png" : ""
   readonly property string glyphsPath: root.isPng ? root.dir + "/.stipple/" + root.stem + "/glyphs.png" : ""
   readonly property string nightPath: root.isPng ? root.dir + "/.stipple/" + root.stem + "/night.png" : ""
 
   readonly property var motion: root.spec ? root.spec.motion : null
-  readonly property bool dots: !!root.spec && !!root.motion && root.spec.grid.mode === "braille"
-    && root.motion.twinkle.on
-  /** Columns (Letters): keyframes at other column counts, drawn from frames.png and glyphs.png. */
+  /** Columns: keyframes at other column counts, drawn from frames.png and glyphs.png. */
   readonly property bool letters: !!root.spec && !!root.motion && !!root.motion.columns && root.motion.columns.on
     && !!root.spec.columns && root.spec.columns.frames.length > 0
-  /** Neither effect plays but the colours follow the sun: the PNG re-inked (shader mode 0). */
-  readonly property bool still: root.recolour && !root.dots && !root.letters
+  /** Columns does not play but the colours follow the sun: the PNG re-inked (shader mode 0). */
+  readonly property bool still: root.recolour && !root.letters
   /**
    * How far the hour's colours have turned the art over (palette.mjs flipAt): 0 draws the saved
    * art, 1 the art drawn the other way round, from the night textures the way it is drawn now has.
@@ -95,7 +92,7 @@ Item {
   readonly property real flip: {
     const n = root.doc ? root.doc.night : null
     if (!root.recolour || !n) return 0
-    const has = root.letters ? !!root.spec.columns.night : root.dots ? !!n.field : true
+    const has = root.letters ? !!root.spec.columns.night : true
     return has ? root.themed.wall.flip : 0
   }
   readonly property bool idle: idleMonitor.isIdle
@@ -332,9 +329,8 @@ Item {
     const m = root.motion
     // Columns: a new keyframe every period / (2 (n - 1)) s, ticked four times as often so each
     // shows for its own time within a quarter frame (a tick that finds no change draws nothing)
-    if (m && root.letters) return Math.min(60, Math.max(1, 8 * (root.spec.columns.frames.length - 1) / Math.max(m.columns.period, 1)))
-    if (!m || !root.dots) return 0
-    return m.twinkle.rate
+    if (!m || !root.letters) return 0
+    return Math.min(60, Math.max(1, 8 * (root.spec.columns.frames.length - 1) / Math.max(m.columns.period, 1)))
   }
 
   /** Share of the screen windows cover at which motion stops: only gaps show. */
@@ -499,8 +495,9 @@ Item {
       root.spec = null
       return
     }
+    // Columns is the only motion (an older Dots wallpaper's Twinkle shows still, re-inked)
     const m = s.motion
-    const on = !!m && (m.twinkle.on || (!!m.columns && m.columns.on))
+    const on = !!m && !!m.columns && m.columns.on
     root.version++
     root.epoch = Date.now()
     root.doc = s
@@ -562,7 +559,7 @@ Item {
         version: root.version,
         paused: root.paused,
         idle: root.idle,
-        screens: surfaces.instances.map(w => ({ name: w.screen ? w.screen.name : "", shown: w.visible, art: w.artStatus, field: w.fieldStatus, fps: w.fps, keyframe: w.keyframe, fullscreen: w.fullscreen, windows: w.hasWindows, covered: Math.round(w.covered * 1000) / 1000, frames: w.frameCount })),
+        screens: surfaces.instances.map(w => ({ name: w.screen ? w.screen.name : "", shown: w.visible, art: w.artStatus, fps: w.fps, keyframe: w.keyframe, fullscreen: w.fullscreen, windows: w.hasWindows, covered: Math.round(w.covered * 1000) / 1000, frames: w.frameCount })),
       })
     }
 
@@ -587,9 +584,7 @@ Item {
 
       screen: modelData
       readonly property int artStatus: artImg.status
-      readonly property int fieldStatus: fieldImg.status
       readonly property bool ready: (!root.still || artImg.status === Image.Ready)
-        && (!root.dots || fieldImg.status === Image.Ready)
         && (!root.letters || (framesImg.status === Image.Ready && glyphsImg.status === Image.Ready))
         && (!root.still || root.flip <= 0 || nightImg.status === Image.Ready)
       visible: (!!root.spec || root.recolour) && ready
@@ -609,8 +604,6 @@ Item {
       readonly property real covered: win.hasWindows && win.visible ? root.coverage(win.monitor.lastIpcObject, win.workspace) : 0
       readonly property real fps: root.fpsFor(win.hasWindows, win.covered, win.fullscreen)
       readonly property bool animating: win.visible && win.fps > 0
-      /** The twinkle tick (y): what the frame shows. */
-      property vector4d clock: Qt.vector4d(0, 0, 0, 0)
       /** Frames asked for so far (status, to check the pacing). */
       property int frameCount: 0
       /** Columns: the keyframe shown. */
@@ -625,24 +618,16 @@ Item {
         shader.grabToImage(r => r.saveToFile(path), Qt.size(w, h))
       }
 
-      // Set the clock for now. A tick that has not moved leaves the clock alone, so no frame is
+      // Show the keyframe for now. A tick that has not moved leaves it alone, so no frame is
       // drawn for it. The timer repeats at a fixed interval: re-arming a one-shot timer after
       // every frame makes Qt Quick render each frame twice.
       function tick() {
         const m = root.motion
-        if (!m) return
+        if (!m || !root.letters) return
         const t = root.frozen >= 0 ? root.frozen : Math.max(0, (Date.now() - root.epoch) / 1000)
-        if (root.letters) {
-          const k = root.columnFrameAt(t, root.spec.columns.frames.length, m.columns.period, root.spec.columns.start)
-          if (k !== win.keyframe) {
-            win.keyframe = k
-            win.frameCount++
-          }
-          return
-        }
-        const c = Qt.vector4d(0, m.twinkle.on ? Math.floor(t * m.twinkle.rate) : 0, 0, 0)
-        if (c.y !== win.clock.y) {
-          win.clock = c
+        const k = root.columnFrameAt(t, root.spec.columns.frames.length, m.columns.period, root.spec.columns.start)
+        if (k !== win.keyframe) {
+          win.keyframe = k
           win.frameCount++
         }
       }
@@ -667,15 +652,6 @@ Item {
         cache: false
         smooth: true
         source: root.still ? "file://" + encodeURI(root.current) + "?v=" + root.version : ""
-      }
-
-      Image {
-        id: fieldImg
-        visible: false
-        asynchronous: false
-        cache: false
-        smooth: false
-        source: root.dots ? "file://" + encodeURI(root.fieldPath) + "?v=" + root.version : ""
       }
 
       Image {
@@ -729,28 +705,19 @@ Item {
         property color paper: root.paper
         property color srcInk: sp ? sp.colours.ink : "black"
         property color srcPaper: sp ? sp.colours.paper : "white"
-        property vector4d canvas: Qt.vector4d(cw, ch, root.letters ? 2 : root.dots ? 1 : 0, sp && sp.motion ? (sp.motion.seed >>> 0) % 65536 : 0)
+        property vector4d canvas: Qt.vector4d(cw, ch, root.letters ? 2 : 0, 0)
         property vector4d map: Qt.vector4d(width / k, height / k, cw / 2 - width / k / 2, ch / 2 - height / k / 2)
-        property vector4d lattice: sp ? Qt.vector4d(sp.layout.x, sp.layout.y, sp.layout.cellW / 2, sp.layout.cellH / 4) : Qt.vector4d(0, 0, 1, 1)
         property vector4d clipRect: {
           const c = sp && sp.layout.clip
           return c ? Qt.vector4d(Math.max(0, Math.floor(c.x)), Math.max(0, Math.floor(c.y)), Math.min(cw, Math.ceil(c.x + c.w)), Math.min(ch, Math.ceil(c.y + c.h)))
                    : Qt.vector4d(0, 0, cw, ch)
         }
-        property vector4d field: {
-          if (!sp || !sp.grid) return Qt.vector4d(1, 1, 0, 0)
-          const px = sp.layout.cellW / 2, py = sp.layout.cellH / 4
-          return Qt.vector4d(sp.grid.cols * 2, sp.grid.rows * 4, Math.min(sp.layout.dotR * px, 0.46 * py, 0.46 * px), 0)
-        }
-        property vector4d effects: {
-          return Qt.vector4d(root.dots ? root.motion.twinkle.amount : 0, root.flip, 0, 0)
-        }
+        property vector4d effects: Qt.vector4d(0, root.flip, 0, 0)
         property vector4d inner: {
           const r = sp && sp.layout.inner
           return r ? Qt.vector4d(r.x, r.y, r.x + r.w, r.y + r.h) : Qt.vector4d(0, 0, cw, ch)
         }
         property color surround: root.surround
-        property vector4d clock: win.clock
         // Columns: the keyframe shown and the two glyph levels nearest its cell height
         readonly property var kf: root.letters ? root.spec.columns.frames[Math.min(win.keyframe, root.spec.columns.frames.length - 1)] : null
         readonly property var lv: kf ? root.levelsFor(kf.cellH) : null
@@ -760,7 +727,6 @@ Item {
         property vector4d lvB: lv ? Qt.vector4d(lv.b.y, lv.b.cellW, lv.b.cellH, lv.b.tileW) : Qt.vector4d(0, 1, 1, 1)
         property vector4d lvX: lv ? Qt.vector4d(lv.a.tileH, lv.a.perRow, lv.b.tileH, lv.b.perRow) : Qt.vector4d(1, 1, 1, 1)
         property vector4d lvMix: Qt.vector4d(lv ? lv.w : 0, 0, 0, 0)
-        property var fieldTex: fieldImg
         property var artTex: artImg
         property var framesTex: framesImg
         property var glyphTex: glyphsImg
