@@ -11,10 +11,10 @@ const COMMANDS: &[&str] = &[
     "save_session",
     "read_session",
     "set_wallpaper",
-    "add_to_theme_backgrounds",
     "theme_colors",
     "sun_location",
     "use_stipple_theme",
+    "take_launch_path",
 ];
 
 fn main() {

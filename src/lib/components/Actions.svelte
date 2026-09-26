@@ -1,21 +1,22 @@
 <script lang="ts">
-  import { save, setAsWallpaper } from '../actions';
+  import { setAsWallpaper } from '../actions';
+  import { baseName } from '../pipeline';
   import { app } from '../state.svelte';
   import Icon from './Icon.svelte';
 
   const off = $derived(!app.loaded || !!app.busy || app.cropping);
+  const title = $derived(app.target
+    ? `Update ${baseName(app.target)} and set it as the Omarchy background (S)`
+    : 'Save to the theme\'s backgrounds and set it as the Omarchy background (S)');
 </script>
 
 <div class="actions">
-  <button type="button" disabled={off} onclick={() => save()} title="Save to ~/Pictures/Wallpapers (S)">
-    <Icon name="save" /> {app.busy === 'Saving…' ? 'Saving…' : 'Save'}
-  </button>
-  <button type="button" class="primary" disabled={off} onclick={() => setAsWallpaper()} title="Save and set as the Omarchy background">
-    <Icon name="wall" /> {app.busy === 'Setting…' ? 'Setting…' : 'Set as wallpaper'}
+  <button type="button" class="primary" disabled={off} onclick={() => setAsWallpaper()} {title}>
+    <Icon name="wall" /> {app.busy ?? 'Set as wallpaper'}
   </button>
 </div>
 
 <style>
-  .actions { display: grid; grid-template-columns: auto 1fr; gap: 8px; }
+  .actions { display: grid; }
   button { height: 36px; }
 </style>

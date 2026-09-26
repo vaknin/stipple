@@ -46,10 +46,18 @@ export const monitors = () => invoke<Monitor[]>('monitors');
 
 export const readFile = (path: string) => invoke<ArrayBuffer>('read_file', { path });
 
-/** Saves ~/Pictures/Wallpapers/<stem>-stipple-<W>x<H>.png (suffixed on collision); the path back. */
-export const savePng = (png: Uint8Array, stem: string, width: number, height: number) =>
+/**
+ * Replaces the saved wallpaper `replace`, or (null) saves
+ * ~/.config/omarchy/backgrounds/<theme>/<stem>-stipple-<W>x<H>.png (suffixed on collision); the
+ * path back.
+ */
+export const savePng = (png: Uint8Array, stem: string, width: number, height: number, replace: string | null) =>
   invoke<string>('save_png', png, {
-    headers: { 'x-stem': encodeURIComponent(stem), 'x-size': `${width}x${height}` },
+    headers: {
+      'x-stem': encodeURIComponent(stem),
+      'x-size': `${width}x${height}`,
+      'x-replace': encodeURIComponent(replace ?? ''),
+    },
   });
 
 /** Writes (or replaces) `<png stem>.stipple.json` next to a saved wallpaper. */
@@ -86,8 +94,6 @@ export const readSession = () => invoke<string | null>('read_session');
 
 export const setWallpaper = (path: string) => invoke<SetResult>('set_wallpaper', { path });
 
-export const addToThemeBackgrounds = (path: string) => invoke<string>('add_to_theme_backgrounds', { path });
-
 export const themeColors = () => invoke<ThemeColors>('theme_colors');
 
 /** The weather location for the Theme tab's sun, or null when none is set. */
@@ -98,3 +104,6 @@ export const useStippleTheme = () => invoke<boolean>('use_stipple_theme');
 
 /** True inside the Tauri webview (false in a plain browser tab of the dev server). */
 export const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+/** The image Stipple was launched with (`stipple <image>`), once; null after that or without one. */
+export const takeLaunchPath = () => invoke<string | null>('take_launch_path');

@@ -20,8 +20,10 @@ pub async fn read_file(path: String) -> Result<Response, String> {
     files::read_image(&PathBuf::from(path)).map(Response::new)
 }
 
-/// A rendered wallpaper: raw PNG body, headers `x-stem` (percent-encoded source name) and
-/// `x-size` (`<W>x<H>`). Returns the absolute path it was saved at.
+/// A rendered wallpaper: raw PNG body, headers `x-stem` (percent-encoded source name), `x-size`
+/// (`<W>x<H>`) and `x-replace` (percent-encoded; empty for a new file). It replaces that saved
+/// wallpaper, or is saved new in the current theme's backgrounds, where the background switcher
+/// shows it. Returns the absolute path it was saved at.
 #[tauri::command]
 pub async fn save_png(request: Request<'_>) -> Result<String, String> {
     let InvokeBody::Raw(bytes) = request.body() else {
@@ -34,7 +36,14 @@ pub async fn save_png(request: Request<'_>) -> Result<String, String> {
         .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)))
         .filter(|&(w, h)| (1..=16384).contains(&w) && (1..=16384).contains(&h))
         .ok_or("x-size must be <width>x<height>")?;
-    let path = files::save_png(&files::wallpapers_dir()?, &stem, size, bytes)?;
+    let replace = files::percent_decode(header("x-replace"));
+    if !replace.is_empty() {
+        let path = files::wallpaper_png(&files::wallpaper_roots()?, &PathBuf::from(replace))?;
+        files::replace_png(&path, size, bytes)?;
+        return Ok(path.display().to_string());
+    }
+    let dir = files::theme_backgrounds_dir()?.join(omarchy::theme_slug()?);
+    let path = files::save_png(&dir, &stem, size, bytes)?;
     Ok(path.display().to_string())
 }
 
@@ -111,15 +120,6 @@ pub async fn read_session() -> Result<Option<String>, String> {
 pub async fn set_wallpaper(path: String) -> Result<omarchy::SetResult, String> {
     let file = files::settable(&PathBuf::from(path))?;
     omarchy::set_background(&file)
-}
-
-/// Copy a saved wallpaper into `~/.config/omarchy/backgrounds/<theme>/` so it joins the rotation,
-/// with its sidecar and motion textures (the animated wallpaper plays there too).
-#[tauri::command]
-pub async fn add_to_theme_backgrounds(path: String) -> Result<String, String> {
-    let file = files::inside(&files::wallpapers_dir()?, &PathBuf::from(path))?;
-    let dest = files::theme_backgrounds_dir()?.join(omarchy::theme_slug()?);
-    Ok(files::copy_wallpaper(&file, &dest)?.display().to_string())
 }
 
 /// mode, background, foreground and accent of the current Omarchy theme.

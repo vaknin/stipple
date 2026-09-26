@@ -1,8 +1,9 @@
 <script lang="ts">
+  import { listen } from '@tauri-apps/api/event';
   import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { open } from '@tauri-apps/plugin-dialog';
   import { onMount, untrack } from 'svelte';
-  import { save } from '$lib/actions';
+  import { setAsWallpaper } from '$lib/actions';
   import Actions from '$lib/components/Actions.svelte';
   import CropModal from '$lib/components/CropModal.svelte';
   import Icon from '$lib/components/Icon.svelte';
@@ -19,7 +20,7 @@
   import { fontsReady, IMAGE_EXTS, openPath, schedule, syncMotion } from '$lib/pipeline';
   import * as session from '$lib/session';
   import { app } from '$lib/state.svelte';
-  import { errorText, inTauri, monitors, sunLocation, themeColors } from '$lib/tauri';
+  import { errorText, inTauri, monitors, sunLocation, takeLaunchPath, themeColors } from '$lib/tauri';
 
   type Tab = 'look' | 'tone' | 'wall' | 'theme' | 'motion';
   let tab: Tab = $state('look');
@@ -115,12 +116,13 @@
     else if (k === ']') app.stepCols(1);
     else if (k === 'i' || k === 'I') app.swapColours();
     else if (k === 'f' || k === 'F') { e.preventDefault(); startCrop(); }
-    else if (k === 's' || k === 'S') { e.preventDefault(); void save(); }
+    else if (k === 's' || k === 'S') { e.preventDefault(); void setAsWallpaper(); }
     else if (k === '\\') { e.preventDefault(); peek(true); }
   }
 
   onMount(() => {
     let unlisten: (() => void) | undefined;
+    let unlistenLaunch: (() => void) | undefined;
     let alive = true;
     if (inTauri()) {
       monitors()
@@ -133,7 +135,13 @@
         .catch(e => app.say('warn', `Could not read the monitors from Hyprland: ${errorText(e)}`));
       themeColors().then(t => (app.omarchy = t)).catch(() => {});
       sunLocation().then(p => (app.sunPlace = p)).catch(() => {});
-      void session.start();
+      // `stipple <image>` opens it over the restored session; a later launch sends its image here
+      void session.start()
+        .then(() => takeLaunchPath())
+        .then(path => { if (path) void openPath(path); })
+        .catch(e => app.say('error', errorText(e)));
+      listen<string>('open-path', ev => void openPath(ev.payload))
+        .then(u => { if (alive) unlistenLaunch = u; else u(); });
       getCurrentWebview()
         .onDragDropEvent(ev => {
           const p = ev.payload;
@@ -152,7 +160,7 @@
       void import('$lib/dev/hooks').then(m => m.install());
     }
     void fontsReady;
-    return () => { alive = false; unlisten?.(); };
+    return () => { alive = false; unlisten?.(); unlistenLaunch?.(); };
   });
 </script>
 

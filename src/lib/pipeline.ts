@@ -359,6 +359,7 @@ export async function openPath(path: string, { asPhoto = false } = {}) {
     await adopt(photo, path, photo.name);
     app.doc.crop = squareCrop(autoCrop(photo, app.cropAspect));
     app.saved = null;
+    app.target = null;
     app.resetHistory();
     app.notice = photo.small ? { kind: 'info', text: 'This photo is small, so fine details may get lost.' } : null;
     schedule();
@@ -414,9 +415,10 @@ async function reopen(pngPath: string, spec: SidecarSpec, editable: boolean, seq
   await adopt(photo, spec.source.path, spec.source.name);
   applySpec(spec);
   app.saved = editable ? { path: pngPath, key: app.imageKey(), motion: JSON.stringify(app.motion), theme: JSON.stringify(app.themeOpts) } : null;
+  app.target = editable ? pngPath : null;
   app.say('info', editable
-    ? `Reopened ${file}. A motion or theme change updates it when you save; other changes save a new file.`
-    : `Reopened ${file}. Saving makes a new file in ~/Pictures/Wallpapers.`);
+    ? `Reopened ${file}. Set as wallpaper updates it.`
+    : `Reopened ${file}. Set as wallpaper saves it as a new background.`);
   schedule();
 }
 
@@ -429,6 +431,16 @@ function applySpec(spec: SidecarSpec) {
   // an older file's crop may have been square: the art's shape can move it off the photo
   app.keepCropOnPhoto();
   app.resetHistory();
+}
+
+/** The wallpaper a session was editing, if it names one. */
+function sessionTarget(json: string): string | null {
+  try {
+    const t = (JSON.parse(json) as { target?: unknown }).target;
+    return typeof t === 'string' && t ? t : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -458,6 +470,7 @@ export async function resume(json: string) {
     await adopt(photo, spec.source.path, spec.source.name);
     applySpec(spec);
     app.saved = null;
+    app.target = sessionTarget(json);
     schedule();
   } finally {
     if (seq === loadSeq) app.loading = false;

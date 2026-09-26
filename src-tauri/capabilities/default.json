@@ -16,10 +16,10 @@
     "allow-save-session",
     "allow-read-session",
     "allow-set-wallpaper",
-    "allow-add-to-theme-backgrounds",
     "allow-theme-colors",
     "allow-sun-location",
     "allow-use-stipple-theme",
+    "allow-take-launch-path",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "dialog:allow-open"

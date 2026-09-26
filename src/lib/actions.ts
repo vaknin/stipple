@@ -1,7 +1,7 @@
-// Save, Set as wallpaper, Add to theme backgrounds.
-//
-// Output: ~/Pictures/Wallpapers/<photo>-stipple-<W>x<H>.png (never overwritten; -2, -3… on
-// collision) plus <same name>.stipple.json, the grid and every setting, so a later renderer (an
+// Set as wallpaper: the one way out. A wallpaper that was reopened (app.target) is rewritten in
+// place; a new photo is saved as ~/.config/omarchy/backgrounds/<theme>/<photo>-stipple-<W>x<H>.png
+// (-2, -3… on collision), so the background switcher lists it, and is the target from then on.
+// Beside it goes <same name>.stipple.json, the grid and every setting, so a later renderer (an
 // animated one, an SVG export) can redraw or re-characterise the art without the photo. Columns
 // motion gets its keyframes and glyphs in .stipple/<same name>/ (frames.png, glyphs.png), which
 // the shell plugin animates.
@@ -24,7 +24,7 @@ import type { Motion } from './motion';
 import { FONT, renderCoverage, renderPng, type Colours } from './render';
 import { app, effectiveCrop, type Snapshot } from './state.svelte';
 import {
-  addToThemeBackgrounds, errorText, readSidecar, removeMotionFiles, saveField, savePng, saveSidecar, setWallpaper, useStippleTheme,
+  errorText, readSidecar, removeMotionFiles, saveField, savePng, saveSidecar, setWallpaper, useStippleTheme,
   type MotionFile,
 } from './tauri';
 
@@ -176,7 +176,8 @@ async function saveTheme(path: string, theme: Snapshot['theme']): Promise<boolea
 
 /**
  * Save the wallpaper (or return the file saved for these exact settings). When only the motion
- * or the Theme settings changed since, that file's sidecar is rewritten instead.
+ * or the Theme settings changed since, that file's sidecar is rewritten instead; other changes
+ * redraw app.target in place, or save a new background when there is none.
  */
 export async function save(): Promise<string | null> {
   if (!app.loaded || app.busy) return null;
@@ -211,13 +212,23 @@ export async function save(): Promise<string | null> {
       const what = [prev.motion !== motionKey && 'motion', prev.theme !== themeKey && 'theme'].filter(Boolean).join(' and ');
       app.say('ok', `Updated the ${what || 'motion'} of ${baseName(path)}.`);
     } else {
-      const png = await renderPng(grid, layout, colours, width, height);
-      path = await savePng(new Uint8Array(await png.arrayBuffer()), name, width, height);
+      const png = new Uint8Array(await (await renderPng(grid, layout, colours, width, height)).arrayBuffer());
+      const target = app.target;
+      let note = '';
+      try {
+        path = await savePng(png, name, width, height, target);
+      } catch (e) {
+        if (!target) throw e;
+        // renamed or deleted since it was opened: keep the work as a new background
+        path = await savePng(png, name, width, height, null);
+        note = ` (${baseName(target)} could not be updated: ${errorText(e)})`;
+      }
       await saveTextures(path, night, layout, snap.wall);
       const columns = motion.columns.on ? await saveColumns(path, snap.wall, !!night) : null;
       await saveSidecar(path, JSON.stringify(sidecar(grid, snap, motion, colours, path, layout, columns, night)));
       await dropUnused(path, columns, night);
-      app.say('ok', `Saved ${baseName(path)} in ~/Pictures/Wallpapers.`);
+      app.target = path;
+      app.say('ok', target && !note ? `Updated ${baseName(path)}.` : `Saved ${baseName(path)} to the backgrounds${note}.`);
     }
     app.saved = { path, key, motion: motionKey, theme: themeKey };
     return path;
@@ -241,34 +252,24 @@ export async function setAsWallpaper() {
   app.busy = 'Setting…';
   try {
     const res = await setWallpaper(path);
-    const add = { label: 'Add to theme backgrounds', run: () => addToTheme(path) };
     let theme = '';
     if (apply) {
       try {
         if (await useStippleTheme()) theme = ' Omarchy now uses the Stipple theme.';
       } catch (e) {
-        app.say('warn', `Wallpaper set: “${res.current_name}”, but the Stipple theme could not be applied: ${errorText(e)}`, add);
+        app.say('warn', `Wallpaper set: “${res.current_name}”, but the Stipple theme could not be applied: ${errorText(e)}`);
         return;
       }
     }
     if (res.ok) {
-      app.say('ok', `Wallpaper set: “${res.current_name}”.${theme} A theme change or cycling backgrounds replaces it.`, add);
+      app.say('ok', `Wallpaper set: “${res.current_name}”.${theme}`);
     } else {
       app.say('warn', `The background points at the new file, but Omarchy reports “${res.current_name}”`
-        + `${res.warning ? ` (${res.warning})` : ''}.${theme}`, add);
+        + `${res.warning ? ` (${res.warning})` : ''}.${theme}`);
     }
   } catch (e) {
     app.say('error', `Could not set the wallpaper: ${errorText(e)}`);
   } finally {
     app.busy = null;
-  }
-}
-
-export async function addToTheme(path: string) {
-  try {
-    const dest = await addToThemeBackgrounds(path);
-    app.say('ok', `Added to the theme's backgrounds: ${dest.replace(/^\/home\/[^/]+/, '~')}`);
-  } catch (e) {
-    app.say('error', `Could not add it to the theme backgrounds: ${errorText(e)}`);
   }
 }

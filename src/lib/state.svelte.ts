@@ -128,6 +128,11 @@ class AppState {
    * (the Theme settings are not part of the image: the PNG keeps the day's colours).
    */
   saved: { path: string; key: string; motion: string; theme: string } | null = $state.raw(null);
+  /**
+   * The wallpaper being edited: Set as wallpaper rewrites this file in place. Null for a new photo,
+   * which is saved as a new file in the theme's backgrounds (and becomes the target).
+   */
+  target: string | null = $state.raw(null);
 
   imageKey(): string {
     const { doc, wall } = this.snapshot();

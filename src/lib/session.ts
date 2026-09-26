@@ -27,6 +27,7 @@ function current(): string | null {
   return JSON.stringify({
     format: SESSION_FORMAT,
     source: { path: l.path, name: l.name },
+    target: app.target,
     doc,
     wallpaper: wall,
     motion,

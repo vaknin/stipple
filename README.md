@@ -31,16 +31,13 @@ fills it exactly.
    - **Theme**: how the desktop's colours follow this wallpaper and the sun under the Stipple
      theme (see [The Stipple theme](#the-stipple-theme)). **Preview at** shows any time of day,
      with a mock bar in the palette's colours over the preview.
-3. **Save** (`S`) writes `~/Pictures/Wallpapers/<photo>-stipple-<W>x<H>.png` (never overwriting:
-   `-2`, `-3`… on collision) and a `.stipple.json` next to it.
-   Saving again after changing only the motion or the Theme settings updates that file instead
-   of making a new one.
-   **Set as wallpaper** saves if needed and runs `omarchy theme bg set`, then checks that
-   `omarchy theme bg current` names the new file.
+3. **Set as wallpaper** (`S`) is the one button. A new photo is saved as
+   `~/.config/omarchy/backgrounds/<theme>/<photo>-stipple-<W>x<H>.png` (`-2`, `-3`… on collision)
+   with a `.stipple.json` next to it, so it joins that theme's backgrounds and the background
+   switcher. From then on, and for a reopened wallpaper, it updates that same file in place. Then
+   it runs `omarchy theme bg set` and checks that `omarchy theme bg current` names the file.
 
-A theme change or cycling backgrounds (`omarchy theme bg next`) replaces the wallpaper. After
-Set, **Add to theme backgrounds** copies it into `~/.config/omarchy/backgrounds/<theme>/` so it
-joins that theme's rotation.
+A theme change or cycling backgrounds (`omarchy theme bg next`) replaces the wallpaper.
 
 | Key | Action |
 | --- | --- |
@@ -50,15 +47,15 @@ joins that theme's rotation.
 | `I` | Swap ink and paper |
 | `F` | Crop |
 | `\` (hold) | Show the photo instead of the art |
-| `S` | Save |
+| `S` | Set as wallpaper |
 
 **Picks up where you left off**: Stipple remembers the open photo and every setting (in
 `~/.local/state/stipple/session.json`, written at each change) and reopens them at the next launch.
 The undo history starts fresh. If the photo has moved since, it starts empty and says so.
 
 **Reopen** a saved wallpaper by opening its PNG: Stipple loads the photo it was made from with every
-setting and the motion, so you can change the motion later (Save updates the file in place) or
-make a new version from it (any other change saves a new file).
+setting and the motion. Set as wallpaper then updates that file in place (the session remembers
+which file it is). If it was renamed or deleted meanwhile, the work is saved as a new background.
 
 ## Output format: PNG plus a JSON sidecar
 
@@ -154,6 +151,10 @@ install -Dm644 src-tauri/icons/128x128@2x.png ~/.local/share/icons/hicolor/256x2
 install -Dm644 assets/stipple.desktop ~/.local/share/applications/stipple.desktop
 ```
 
+`stipple <image>` opens that image; a saved wallpaper (a PNG with its `.stipple.json`) reopens
+with its photo and every setting. There is one window: a later launch hands its image to the
+running Stipple over `$XDG_RUNTIME_DIR/stipple.sock` and raises it.
+
 **Dev bridge**: in `bun tauri dev` only, `dev/tw.sh 'return TW.app.doc'` runs a snippet in the app
 window and prints the answer (`src/lib/dev/hooks.ts` lists what `TW` offers, including a drag
 benchmark, `TW.bench(150)`). WebKit pauses animation frames while the window is on a hidden
@@ -167,11 +168,12 @@ render a parked window anyway.
 - **Tauri 3 (alpha)** by choice instead of Tauri 2.
 - **Rust commands** (`src-tauri/src/commands.rs`), and nothing broader: `monitors`, `read_file`
   (PNG/JPEG/WebP ≤ 64 MB; the dialog and drag-and-drop give paths, not bytes), `save_png` (raw
-  body, checks the PNG is exactly W×H), `save_sidecar` (replaced atomically), `save_field` (raw RGB
+  body, checks the PNG is exactly W×H; replaces a saved wallpaper in place or saves a new one in the
+  current theme's backgrounds), `save_sidecar` (replaced atomically), `save_field` (raw RGB
   body, encoded as `frames.png`, `glyphs.png` or `night.png`), `remove_motion_files` (the ones a
   saved wallpaper no longer uses), `read_sidecar` (reopening), `save_session` / `read_session`
   (the last photo and settings, see above), `set_wallpaper` (only files in
-  `~/Pictures/Wallpapers` or the theme backgrounds), `add_to_theme_backgrounds`, `theme_colors`,
+  `~/Pictures/Wallpapers` or the theme backgrounds), `theme_colors`,
   `sun_location` (the weather location's coordinates), `use_stipple_theme` (`omarchy theme set
   stipple`, keeping the background).
   The capability grants exactly these plus drag-and-drop events and the open dialog; no fs or

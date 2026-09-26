@@ -135,30 +135,28 @@ fn write_all(path: &Path, mut f: File, bytes: &[u8]) -> Result<(), String> {
 /// Save a rendered wallpaper as `<dir>/<stem>-stipple-<W>x<H>.png` (suffixed on collision). The
 /// bytes must be a PNG of exactly `size`.
 pub fn save_png(dir: &Path, stem: &str, size: (u32, u32), bytes: &[u8]) -> Result<PathBuf, String> {
-    if bytes.len() > MAX_PNG {
-        return Err("the image is larger than 256 MB".into());
-    }
-    match png_size(bytes) {
-        None => return Err("the data is not a PNG".into()),
-        Some(s) if s != size => {
-            return Err(format!("the PNG is {}x{}, expected {}x{}", s.0, s.1, size.0, size.1));
-        }
-        Some(_) => {}
-    }
+    check_png(size, bytes)?;
     let base = format!("{}-stipple-{}x{}", sanitize_stem(stem), size.0, size.1);
     let (path, f) = create_unique(dir, &base, ".png")?;
     write_all(&path, f, bytes)?;
     Ok(path)
 }
 
-/// A path that must be an existing file directly inside `dir`.
-pub fn inside(dir: &Path, path: &Path) -> Result<PathBuf, String> {
-    let dir = dir.canonicalize().map_err(|e| format!("{}: {e}", dir.display()))?;
-    let p = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
-    if p.parent() != Some(dir.as_path()) || !p.is_file() {
-        return Err(format!("{} is not a file in {}", p.display(), dir.display()));
+/// Overwrite the wallpaper at `path` (already checked by wallpaper_png) with a new rendering of it.
+pub fn replace_png(path: &Path, size: (u32, u32), bytes: &[u8]) -> Result<(), String> {
+    check_png(size, bytes)?;
+    write_atomic(path, bytes)
+}
+
+fn check_png(size: (u32, u32), bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() > MAX_PNG {
+        return Err("the image is larger than 256 MB".into());
     }
-    Ok(p)
+    match png_size(bytes) {
+        None => Err("the data is not a PNG".into()),
+        Some(s) if s != size => Err(format!("the PNG is {}x{}, expected {}x{}", s.0, s.1, size.0, size.1)),
+        Some(_) => Ok(()),
+    }
 }
 
 /// Replace `path` with `bytes` in one step (a temporary file in the same folder, then a rename),
@@ -343,43 +341,6 @@ pub fn remove_motion_files(png: &Path, keep: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Copy a file into `dest_dir` under its own name (suffixed on collision).
-pub fn copy_unique(src: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
-    let stem = src.file_stem().and_then(|s| s.to_str()).ok_or("bad file name")?;
-    let ext = ext_of(src).map(|e| format!(".{e}")).unwrap_or_default();
-    let bytes = fs::read(src).map_err(|e| format!("{}: {e}", src.display()))?;
-    let (path, f) = create_unique(dest_dir, stem, &ext)?;
-    write_all(&path, f, &bytes)?;
-    Ok(path)
-}
-
-/// Copy a wallpaper into `dest_dir` with its sidecar and motion textures, under the (possibly suffixed)
-/// new name. The copied sidecar's `image.file` names the copy.
-pub fn copy_wallpaper(png: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
-    let dest = copy_unique(png, dest_dir)?;
-    if let Some(json) = read_sidecar(png)? {
-        let json = match serde_json::from_str::<serde_json::Value>(&json) {
-            Ok(mut v) => {
-                if let Some(image) = v.get_mut("image").and_then(|i| i.as_object_mut()) {
-                    let name = dest.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-                    image.insert("file".into(), name.into());
-                }
-                serde_json::to_string(&v).map_err(|e| e.to_string())?
-            }
-            Err(_) => json,
-        };
-        save_sidecar(&dest, &json)?;
-    }
-    for name in MOTION_FILES {
-        let src = motion_path(png, name)?;
-        if src.is_file() {
-            let bytes = fs::read(&src).map_err(|e| format!("{}: {e}", src.display()))?;
-            write_atomic(&motion_path(&dest, name)?, &bytes)?;
-        }
-    }
-    Ok(dest)
-}
-
 /// Files a wallpaper may be set from: our own output folder or the theme backgrounds.
 pub fn settable(path: &Path) -> Result<PathBuf, String> {
     if !ext_of(path).is_some_and(|e| IMAGE_EXTS.contains(&e.as_str())) {
@@ -462,6 +423,10 @@ mod tests {
         assert!(save_png(&d, "cat", (1920, 1080), &png(1920, 1079)).is_err());
         assert!(save_png(&d, "cat", (1920, 1080), b"not a png at all, not at all").is_err());
 
+        replace_png(&a, (1920, 1080), &png(1920, 1080)).unwrap();
+        assert!(replace_png(&a, (1920, 1080), &png(1920, 1079)).is_err());
+        assert_eq!(fs::read_dir(&d).unwrap().count(), 3, "replacing leaves no temporary file");
+
         let roots = [d.clone()];
         let b = wallpaper_png(&roots, &b).unwrap();
         let s = save_sidecar(&b, "{\"v\":1}").unwrap();
@@ -480,13 +445,7 @@ mod tests {
             "{names:?}"
         );
 
-        let other = tmp("copy");
-        let c1 = copy_unique(&a, &other).unwrap();
-        let c2 = copy_unique(&a, &other).unwrap();
-        assert_eq!(c1.file_name().unwrap(), "cat-stipple-1920x1080.png");
-        assert_eq!(c2.file_name().unwrap(), "cat-stipple-1920x1080-2.png");
         let _ = fs::remove_dir_all(&d);
-        let _ = fs::remove_dir_all(&other);
     }
 
     #[test]
@@ -515,32 +474,10 @@ mod tests {
         assert!(f.exists() && fr.exists() && !gl.exists() && !ni.exists());
         remove_motion_files(&a, &["field".into(), "frames".into()]).unwrap();
 
-        // a copy takes its sidecar and field along under the new name
-        save_sidecar(&a, "{\"image\":{\"file\":\"cat-stipple-4x4.png\",\"width\":4},\"v\":1}").unwrap();
-        let theme = tmp("field-theme");
-        copy_unique(&a, &theme).unwrap();
-        let c = copy_wallpaper(&a, &theme).unwrap();
-        assert_eq!(c.file_name().unwrap(), "cat-stipple-4x4-2.png");
-        let v: serde_json::Value = serde_json::from_str(&read_sidecar(&c).unwrap().unwrap()).unwrap();
-        assert_eq!(v["image"]["file"], "cat-stipple-4x4-2.png");
-        assert_eq!(v["image"]["width"], 4);
-        assert_eq!(fs::read(motion_path(&c, "field").unwrap()).unwrap(), fs::read(&f).unwrap());
-        assert_eq!(fs::read(motion_path(&c, "frames").unwrap()).unwrap(), fs::read(&fr).unwrap());
-        assert!(!motion_path(&c, "glyphs").unwrap().exists());
-        assert_eq!(
-            motion_path(&c, "field").unwrap(),
-            theme.join(".stipple/cat-stipple-4x4-2/field.png")
-        );
-        // a plain PNG copies alone
-        let plain = save_png(&d, "dog", (4, 4), &png(4, 4)).unwrap();
-        let p = copy_wallpaper(&plain, &theme).unwrap();
-        assert_eq!(read_sidecar(&p).unwrap(), None);
-        assert!(!motion_path(&p, "field").unwrap().exists());
         // removing every texture removes the emptied folders
-        remove_motion_files(&c, &[]).unwrap();
-        assert!(!theme.join(".stipple").exists());
+        remove_motion_files(&a, &[]).unwrap();
+        assert!(!d.join(".stipple").exists());
         let _ = fs::remove_dir_all(&d);
-        let _ = fs::remove_dir_all(&theme);
     }
 
     #[test]
