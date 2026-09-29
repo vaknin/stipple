@@ -2,6 +2,9 @@
 
 export type DayMode = 'off' | 'sky' | 'light' | 'warm' | 'custom';
 export type Surface = 'paper' | 'deep' | 'tinted';
+export type AnsiName = 'red' | 'orange' | 'yellow' | 'green' | 'cyan' | 'blue' | 'magenta';
+/** The palette colours that can be picked by hand. */
+export type OwnColour = 'accent' | AnsiName;
 
 export interface ThemeOpts {
   day: DayMode;
@@ -11,6 +14,7 @@ export interface ThemeOpts {
   surface: Surface;
   wallpaper: boolean;
   apply: boolean;
+  colors: Partial<Record<OwnColour, string>>;
 }
 
 export interface Sun { elevation: number; rising: boolean }
@@ -22,6 +26,8 @@ export type Palette = Record<string, string>;
 
 export const DAY_MODES: DayMode[];
 export const SURFACES: Surface[];
+export const OWN_COLOURS: OwnColour[];
+export const ANSI_NAMES: AnsiName[];
 export function defaultTheme(): ThemeOpts;
 export function cleanTheme(raw: unknown): ThemeOpts;
 
@@ -36,6 +42,7 @@ export function mixHex(a: string, b: string, t: number): string;
 export function luminance(h: string): number;
 export function contrast(a: string, b: string): number;
 export function deltaE(a: string, b: string): number;
+export function protan(h: string): string;
 export function readable(fg: string, bg: string, ratio: number, toward?: 0 | 1, oneSide?: boolean): string;
 
 export function sun(date: Date, lat: number, lon: number): Sun;

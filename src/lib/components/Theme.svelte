@@ -13,6 +13,7 @@
   import Seg from './Seg.svelte';
   import Slider from './Slider.svelte';
   import Switch from './Switch.svelte';
+  import ThemeColours from './ThemeColours.svelte';
 
   const DEF = defaultTheme();
   const t = $derived(app.themeOpts);
@@ -92,7 +93,6 @@
     return `${placeName} · sunrise ${rise} · sunset ${set} · sun ${Math.round(s.elevation)}° ${s.rising ? '↑' : '↓'}`;
   });
 
-  const SWATCHES = ['background', 'foreground', 'accent', 'red', 'yellow', 'green', 'cyan', 'blue', 'magenta'];
   const palette = $derived(app.themed.palette);
 
   // ---- a saved wallpaper whose sidecar has other Theme settings: Save updates it in place
@@ -170,12 +170,9 @@
         Set them with <code>omarchy-weather-location --set &lt;name&gt; &lt;lat&gt;,&lt;lon&gt;</code>.</span>
     </p>
   {/if}
-  <div class="swatches" role="list" aria-label="Palette">
-    {#each SWATCHES as k (k)}
-      <i role="listitem" style:background={palette[k]} title="{k} {palette[k]}"></i>
-    {/each}
-  </div>
 </div>
+
+<ThemeColours {palette} at={app.previewMinute == null ? `now (${hhmm(minute)})` : hhmm(minute)} />
 
 {#if behind}
   <p class="update" role="status">
@@ -221,8 +218,6 @@
   .swatch .num { font-size: 11px; }
   .at { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px; }
   .at button { height: 26px; font-size: 12px; }
-  .swatches { display: grid; grid-template-columns: repeat(9, 1fr); gap: 3px; }
-  .swatches i { height: 16px; border-radius: 4px; border: 1px solid var(--border-strong); }
   .warn {
     display: flex;
     gap: 6px;

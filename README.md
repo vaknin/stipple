@@ -30,7 +30,9 @@ fills it exactly.
      the still.
    - **Theme**: how the desktop's colours follow this wallpaper and the sun under the Stipple
      theme (see [The Stipple theme](#the-stipple-theme)). **Preview at** shows any time of day,
-     with a mock bar in the palette's colours over the preview.
+     with a mock bar in the palette's colours over the preview. **Colours** lists the palette of
+     that time, each colour with what it is used for, and draws a terminal in it; click a swatch to
+     pick the accent or a terminal colour by hand.
 3. **Set as wallpaper** (`S`) is the one button. A new photo is saved as
    `~/.config/omarchy/backgrounds/<theme>/<photo>-stipple-<W>x<H>.png` (`-2`, `-3`… on collision)
    with a `.stipple.json` next to it, so it joins that theme's backgrounds and the background
@@ -230,7 +232,11 @@ as wallpaper** on in the Theme tab and Set a wallpaper.
 The palette is `shell-plugin/kivan.stipple/palette.mjs`, shared by the plugin, the app's preview
 and the tests. The ink becomes the accent, the paper the surfaces, text is a quiet colour of the
 ink's hue at 7:1 or more, and the terminal colours are fixed hues re-toned for the paper and turned
-a little toward the ink. What the hour does is the wallpaper's Theme setting:
+a little toward the ink. The terminal colours differ in lightness and on the blue-yellow axis as
+well as in hue (as the Okabe-Ito colours do), so red, yellow and green stay apart for protan and
+deutan eyes; the tests check the pairs that matter under a protanopia simulation. Colours picked by
+hand in the Theme tab replace the derived ones, their lightness moved only as far as they need to
+read on the background. What the hour does is the wallpaper's Theme setting:
 
 | Day | What changes |
 | --- | --- |

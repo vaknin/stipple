@@ -7,8 +7,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  cleanTheme, colorsToml, contrast, DAY_MODES, defaultTheme, deltaE, flipAt, lightInk, needsNight, paletteFor, renderTemplate,
-  sun, sunTimes, SURFACES, themeAt, type DayMode, type Palette, type Surface, type ThemeOpts,
+  ANSI_NAMES, cleanTheme, colorsToml, contrast, DAY_MODES, defaultTheme, deltaE, flipAt, lchHex, lightInk, needsNight, paletteFor,
+  protan, renderTemplate, sun, sunTimes, SURFACES, themeAt, type DayMode, type Palette, type Surface, type ThemeOpts,
 } from '$palette';
 
 // sunTimes works on the local day: pin it so the expectations below are in UTC everywhere
@@ -176,6 +176,70 @@ describe('which way the art goes', () => {
   });
 });
 
+describe('terminal colours', () => {
+  // the pairs that carry meaning: errors / success, busy / done, the diff gutter, info / links
+  const PAIRS = [
+    ['red', 'green'], ['yellow', 'green'], ['red', 'yellow'], ['green', 'cyan'], ['blue', 'magenta'], ['cyan', 'blue'],
+    ['red', 'magenta'], ['orange', 'green'], ['orange', 'red'], ['orange', 'yellow'], ['green', 'blue'],
+  ] as const;
+  const apart = (p: Palette, x: string, y: string) => deltaE(protan(p[x]!), protan(p[y]!));
+
+  // the papers Stipple makes: near-grey dark or light ones, and the riso presets
+  const r = rng(11);
+  const walls = [
+    ...WALLS, { ink: '#ffe800', paper: '#1d3b6a' }, { ink: '#ea006d', paper: '#000000' }, { ink: '#5ec8e5', paper: '#141416' },
+    ...Array.from({ length: 150 }, () => ({ ink: hex(r), paper: lchHex(r() < 0.6 ? r() * 0.3 : 0.85 + r() * 0.15, r() * 0.05, r() * 360) })),
+  ];
+
+  test('stay apart for protan eyes', () => {
+    const close: string[] = [];
+    for (const w of walls) {
+      for (const surface of SURFACES as Surface[]) {
+        const p = paletteFor(w, opts({ surface }));
+        for (const [x, y] of PAIRS) {
+          const d = apart(p, x, y);
+          if (d < 0.035) close.push(`${x}/${y} ${d.toFixed(3)}: ${w.ink} on ${w.paper} ${surface}`);
+        }
+      }
+    }
+    expect(close).toEqual([]);
+  });
+
+  test('red, yellow and green are far apart on black and on white', () => {
+    for (const paper of ['#000000', '#ffffff']) {
+      const p = paletteFor({ ink: '#808080', paper }, opts({}));
+      for (const [x, y] of [['red', 'green'], ['yellow', 'green'], ['red', 'yellow']] as const) {
+        expect(apart(p, x, y)).toBeGreaterThan(0.09);
+      }
+    }
+  });
+
+  test('read at 4.5:1', () => {
+    const bad: string[] = [];
+    for (const w of walls) {
+      const p = paletteFor(w, opts({}));
+      for (const k of ANSI_NAMES) {
+        for (const key of [k, `bright_${k}`]) {
+          if (p[key] && contrast(p[key]!, p.background!) < 4.45) bad.push(`${key} on ${w.paper}: ${contrast(p[key]!, p.background!).toFixed(2)}`);
+        }
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  test('colours picked by hand are kept, moved only as far as they must to read', () => {
+    const w = { ink: '#ff48b0', paper: '#000000' };
+    const p = paletteFor(w, opts({ colors: { yellow: '#ffd000', accent: '#62a8e5', blue: '#000080' } }));
+    expect(p.yellow).toBe('#ffd000');
+    expect(p.accent).toBe('#62a8e5');
+    expect(p.blue).not.toBe('#000080');
+    expect(contrast(p.blue!, p.background!)).toBeGreaterThanOrEqual(4.45);
+    // the others are derived as before (leaning toward the accent picked)
+    expect(p.red).toBe(paletteFor(w, opts({ colors: { accent: '#62a8e5' } })).red);
+    expect(paletteFor(w, opts({ colors: { yellow: '#ffd000' } })).red).toBe(paletteFor(w, opts({})).red);
+  });
+});
+
 describe('cleanTheme', () => {
   test('tolerates garbage', () => {
     const d = defaultTheme();
@@ -187,6 +251,8 @@ describe('cleanTheme', () => {
     expect(cleanTheme({ strength: Infinity }).strength).toBe(d.strength);
     expect(cleanTheme({ day: 'custom', nightInk: '#ABCDEF', surface: 'tinted', wallpaper: false, apply: false }))
       .toEqual({ ...d, day: 'custom', nightInk: '#abcdef', surface: 'tinted', wallpaper: false, apply: false });
+    expect(cleanTheme({ colors: { red: '#FF0000', teal: '#00ffff', blue: 'blue', accent: '#123' } }).colors).toEqual({ red: '#ff0000' });
+    expect(cleanTheme({ colors: 'red' }).colors).toEqual({});
   });
 });
 

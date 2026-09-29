@@ -13,6 +13,8 @@
 
 export const DAY_MODES = ['off', 'sky', 'light', 'warm', 'custom'];
 export const SURFACES = ['paper', 'deep', 'tinted'];
+/** The palette colours a wallpaper's Theme settings may set by hand (`colors`). */
+export const OWN_COLOURS = ['accent', 'red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'magenta'];
 
 /**
  * The Theme settings a wallpaper's sidecar carries.
@@ -22,9 +24,11 @@ export const SURFACES = ['paper', 'deep', 'tinted'];
  *   surface    the bar and panels: the paper, a deeper paper, or paper tinted with the ink
  *   wallpaper  the wallpaper follows the sun too (false: only the desktop's colours do)
  *   apply      Set as wallpaper also switches Omarchy to the Stipple theme
+ *   colors     palette colours picked by hand (OWN_COLOURS: #rrggbb), kept readable on the hour's
+ *              background; the others are derived
  */
 export function defaultTheme() {
-  return { day: 'sky', strength: 0.7, nightInk: null, nightPaper: null, surface: 'paper', wallpaper: true, apply: true };
+  return { day: 'sky', strength: 0.7, nightInk: null, nightPaper: null, surface: 'paper', wallpaper: true, apply: true, colors: {} };
 }
 
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -35,6 +39,11 @@ export function cleanTheme(raw) {
   if (!raw || typeof raw !== 'object') return d;
   const hex = v => (typeof v === 'string' && HEX.test(v) ? v.toLowerCase() : null);
   const s = Number(raw.strength);
+  const colors = {};
+  for (let i = 0; i < OWN_COLOURS.length; i++) {
+    const v = raw.colors && typeof raw.colors === 'object' ? hex(raw.colors[OWN_COLOURS[i]]) : null;
+    if (v) colors[OWN_COLOURS[i]] = v;
+  }
   return {
     day: DAY_MODES.indexOf(raw.day) >= 0 ? raw.day : d.day,
     strength: Number.isFinite(s) ? Math.min(1, Math.max(0, s)) : d.strength,
@@ -43,6 +52,7 @@ export function cleanTheme(raw) {
     surface: SURFACES.indexOf(raw.surface) >= 0 ? raw.surface : d.surface,
     wallpaper: typeof raw.wallpaper === 'boolean' ? raw.wallpaper : d.wallpaper,
     apply: typeof raw.apply === 'boolean' ? raw.apply : d.apply,
+    colors: colors,
   };
 }
 
@@ -150,6 +160,20 @@ export function contrast(a, b) {
 export function deltaE(a, b) {
   const x = lab(a), y = lab(b);
   return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+}
+
+// Machado, Oliveira and Fernandes (2009): full protanopia, applied to linear sRGB
+const PROTAN = [
+  [0.152286, 1.052583, -0.204868],
+  [0.114503, 0.786281, 0.099216],
+  [-0.003882, -0.048116, 1.051998],
+];
+
+/** How a colour looks with protanopia (no working red cones): a simulation, as #rrggbb. */
+export function protan(h) {
+  const c = hexRgb(h).map(toLin);
+  const o = PROTAN.map(r => toGam(clamp(r[0] * c[0] + r[1] * c[1] + r[2] * c[2], 0, 1)));
+  return rgbHex(o);
 }
 
 /**
@@ -359,15 +383,51 @@ export function dayColours(colours, theme, sunNow) {
 
 // ------------------------------------------------------------------- palette
 
-// The terminal colours: named hues, re-toned for the paper and turned a little toward the ink.
-const ANSI = [
-  ['red', 25], ['orange', 55], ['yellow', 90], ['green', 145],
-  ['cyan', 195], ['blue', 250], ['magenta', 330],
-];
+// The terminal colours as OKLCH [L, C, h] on a dark and on a light background. They differ in
+// lightness and on the blue-yellow axis as well as in hue, as the Okabe-Ito colours do (vermillion,
+// clear yellow, bluish green, sky blue, reddish purple), because that is what an eye without red
+// or green cones still tells apart: red, yellow and green of one lightness look the same to it.
+// palette.test.ts checks the pairs that carry meaning under a protanopia simulation.
+const ANSI = {
+  red: { dark: [0.64, 0.17, 40], light: [0.4, 0.19, 32] },
+  orange: { dark: [0.76, 0.15, 62], light: [0.6, 0.16, 58] },
+  yellow: { dark: [0.91, 0.16, 103], light: [0.64, 0.14, 100] },
+  green: { dark: [0.75, 0.13, 165], light: [0.47, 0.11, 168] },
+  cyan: { dark: [0.86, 0.09, 215], light: [0.55, 0.1, 222] },
+  blue: { dark: [0.62, 0.16, 258], light: [0.34, 0.17, 268] },
+  magenta: { dark: [0.79, 0.14, 335], light: [0.51, 0.2, 335] },
+};
+export const ANSI_NAMES = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'magenta'];
+
+/**
+ * The terminal colours' lightness for a background: the ANSI ladder moved and, where it must,
+ * squeezed into the range that reads at 4.5:1 there (above it on a dark background, below on a light).
+ */
+function ladder(bg, light) {
+  const side = light ? 'light' : 'dark';
+  let lo = 1, hi = 0;
+  for (let i = 0; i < ANSI_NAMES.length; i++) {
+    const L = ANSI[ANSI_NAMES[i]][side][0];
+    lo = Math.min(lo, L); hi = Math.max(hi, L);
+  }
+  // the lightness of a grey at 4.5:1: the colours sit a little past it, having some chroma
+  let a = light ? 0 : lab(bg)[0], b = light ? lab(bg)[0] : 1;
+  for (let i = 0; i < 20; i++) {
+    const m = (a + b) / 2, ok = contrast(lchHex(m, 0, 0), bg) >= 4.5;
+    if (ok === light) a = m; else b = m;
+  }
+  const edge = light ? a - 0.02 : b + 0.02;
+  let to0 = lo, to1 = hi;
+  if (light && hi > edge) { to1 = edge; to0 = Math.max(0.15, Math.min(lo, edge - (hi - lo))); }
+  if (!light && lo < edge) { to0 = edge; to1 = Math.min(0.97, Math.max(hi, edge + (hi - lo))); }
+  return L => to0 + (L - lo) / (hi - lo) * (to1 - to0);
+}
 
 /**
  * The whole Omarchy palette (colors.toml keys) for a wallpaper's ink and paper, already shifted
  * for the hour. The ink is the accent; text is a quiet colour of the ink's hue that reads at 7:1.
+ * Colours picked by hand (theme.colors) replace the derived ones, their lightness moved as far as
+ * they need to read on the background.
  * Light or dark follows the paper: when the hour takes it across a mid grey (Custom between a
  * light day and a dark night) the palette switches over once, as a light / dark theme change would;
  * no text colour reads on a mid grey, so there is no smooth way across.
@@ -392,7 +452,8 @@ export function paletteFor(colours, theme) {
   const bgShade = d => lchHex(b[0] + d, b[1], b[2]);
 
   const up = light ? 0 : 1;
-  const accent = readable(colours.ink.toLowerCase(), bg, 3, up);
+  const own = t.colors;
+  const accent = readable((own.accent || colours.ink).toLowerCase(), bg, 3, up);
   const a = lch(accent);
   const fg = readable(lchHex(light ? 0.28 : 0.9, Math.min(a[1], 0.035), a[2]), bg, 7, up);
   const f = lch(fg);
@@ -412,11 +473,19 @@ export function paletteFor(colours, theme) {
     bright_foreground: lchHex(f[0] + dir * 0.05, f[1], f[2]),
   };
 
-  const baseL = light ? 0.5 : 0.72, baseC = 0.13;
-  for (let i = 0; i < ANSI.length; i++) {
-    const name = ANSI[i][0], hue = ANSI[i][1] + turn(ANSI[i][1], a[2]) * 0.12;
-    p[name] = readable(lchHex(baseL, baseC, hue), bg, 4.5, up);
-    if (name !== 'orange') p['bright_' + name] = readable(lchHex(baseL + dir * 0.08, baseC + 0.02, hue), bg, 4.5, up);
+  // turned a little toward the accent, as far as it has a hue (a grey ink has none), and the
+  // ladder of lightness fitted into what reads on this background: clamping each colour on its own
+  // would give them all the same lightness on a mid-tone paper
+  const lean = 0.08 * Math.min(1, a[1] / 0.1);
+  const fit = ladder(bg, light);
+  for (let i = 0; i < ANSI_NAMES.length; i++) {
+    const name = ANSI_NAMES[i];
+    let k = ANSI[name][light ? 'light' : 'dark'];
+    if (own[name]) k = lch(own[name]);
+    else k = [fit(k[0]), k[1], k[2] + turn(k[2], a[2]) * lean];
+    p[name] = readable(lchHex(k[0], k[1], k[2]), bg, 4.5, up);
+    const bL = clamp(k[0] + dir * 0.07, 0.05, 0.95);
+    if (name !== 'orange') p['bright_' + name] = readable(lchHex(bL, k[1] + (own[name] ? 0 : 0.02), k[2]), bg, 4.5, up);
   }
   p.brown = lchHex(light ? 0.42 : 0.4, 0.07, 50);
   p.hyprland_inactive_border = 'rgba(' + mixLab(bg, fg, 0.25).slice(1) + 'aa)';
