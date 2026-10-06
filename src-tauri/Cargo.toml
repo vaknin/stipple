@@ -28,3 +28,8 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# Dependencies keep the default strip, like in the other repos, so the compile cache shares the
+# build scripts and proc-macros; the final binary is still fully stripped.
+[profile.release.package."*"]
+strip = "debuginfo"
